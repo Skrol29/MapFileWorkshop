@@ -28,11 +28,13 @@ if ($layer = $mf->searchObj('LAYER', 'my_country')) {
 
 ### Classes:
 
+```
 MapFileObject:   Represents a MapFile object (MAP, LAYER, CLASS, STYLE, ....) for reading or editing.
 MapFileWorkshop: A toolbox for special search and edition into a physical MapFile.
 MapFileSynopsis: A core class for managing the dictionary of special keywords.
+```
 
-### MapFileWorkshop class:
+### the MapFileWorkshop class:
 
   An object for reading/writing/search in an existing MapFile.
   It's better to use MapFileObject::getFromFile() for simply getting the root object in the file (usually a MAP object).
@@ -54,7 +56,7 @@ Synopsis:
  ->warnings                 (array) Warnings messages collected during the parsing.
 ```
 
-###  MapFileObject class:
+###  the MapFileObject class:
 
   Represents a MapFile object, with its properties and children objects.
   
@@ -91,7 +93,7 @@ Synopsis:
 
 ```
 
-###  MapFileSynopsis class:
+###  the MapFileSynopsis class:
  It's a core class that contains the dictionary of MapFile special keyswords.
  Keywords that are not in the synopsis are supposed to be simple MapFile properties (a keyword with a single value).
 
