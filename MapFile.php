@@ -1,45 +1,49 @@
 <?php
 
 /**
- * A PHP library for reading and editing MapFiles for MapServer version 5 to 7 and higher.
+ * MapFile is a PHP library for reading, editing and creating MapFiles for MapServer version 5 to 7 and higher.
  * It's peculiarity is that no regular expression is used. The MapFile is read with respect to
  *  the MapServer syntax, but without understanding the meaning. The dictionary of special keyswords
  *  is stored into a Synopsis class. The Synopsis class can be updated if needed in futur MapServer versions. 
  *
- * This library can read MapFile sources with CASE INSENSITIVE keyworks, but all objects of this library will be modelised with UPPERCASE keywords.
+ * The MapFile library is also a nice tool to find syntax errors in an existing MapFile.
+ *
+ * This library can read MapFile sources with case insensitive keyworks, but all objects of this library will be modelised with UPPERCASE keywords.
  * So you have to use UPPERCASE keywords for managing objects, while your MapFile can stay case insensitive.
  *
  * @author Skrol29
- * @date   2018-06-29
+ * @date   2018-09-12
  * @version 0.09 beta 2017-04-24
  * @version 0.10 beta 2017-11-17
  * @version 0.11 beta 2018-06-29
  * @version 0.12 beta 2018-09-10
+ * @version 0.13 beta 2018-09-12
  *
  * 
  * @example #1
- * $map = new MapFileObject::getFromFile('/opt/my_app/file.map');
- * echo $map->asString();
+ *
+ * $map = new MapFileObject::getFromFile('my_source_file.map'); // read and load the complete MAP definition in memory, i.e. including all layers
+ * $layer = $map->getChild('LAYER', 'my_sweet_layer');
+ * echo $layer->getProp('DATA'); // reading a property
+ * echo $layer->asString(); // get the MapServer definition
  *
  * @example #2
- * $mf = new MapFileWorkshop('/opt/my_app/file.map');
- * if ($layer = $mf->searchObj('LAYER', 'my_country')) {
- *    if ($class = $layer->getChild('CLASS', 1)) {
- *       if ($style = $class->getChild('STYLE', 1)) {
- *          $x = $style->getProp('OPACITY');
- *          $style->setProp('OUTLINECOLOR', $style->colorHex2Ms('FFFFFF'));
- *          $mf->replaceDef($style);
- *       }
- *    }
- * }
  *
+ * $ws = new MapFileWorkshop('my_source_file.map'); // the source file is not sought at this point
+ * $layer = $ws->searchObj('LAYER', 'my_sweet_layer'); // stop the reading when the object is found, load only the found object in memory.
+ * $class = $layer->getChild('CLASS', 1);
+ * $style = $class->getChild('STYLE', 1);
+ * $opacity = $style->getProp('OPACITY');
+ * $style->setProp('OUTLINECOLOR', $style->colorHex2Ms('FFFFFF'));
+ * $style->setComment("modified by the demo");
+ * $ws->replaceDef($style->getSrcPosition(), $style); // replace the object in the target file
  *
  * --------
  * Classes:
  * --------
  * MapFileObject:   Represents a MapFile object (MAP, LAYER, CLASS, STYLE, ....) for reading or editing.
- * MapFileWorkshop: A toolbox for special search and edition into a physical MapFile.
- * MapFileSynopsis: A core class for managing the dictionary of special keywords.
+ * MapFileWorkshop: A toolbox for fast search and for replace into a physical MapFile.
+ * MapFileSynopsis: The core class for managing the dictionary of special keywords.
  *
  * --------------
  * MapFileWorkshop class:
@@ -50,11 +54,11 @@
  *
  * Synopsis:
  *   new MapFileWorkshop($sourceFile = false, $targetFile = false) Create a new instance for working on the source file.
- *  ->getRootObj()             Return the root object in the file, it's typically a MAP object.
- *  ->searchObj($type, $name)  Search for the first object in the root chidren that matches the type and name.
- *  ->searchObj(array($type_level_1=>$name1, $type_level_2=>$name2, ...))) Search for the first object that matches the path from the root object.
- *  ->readSource($txt)         Parse the given source and returns the root object.
- *  ->replaceDef($srcPos, $newDef, $targetFile = false) Replace a snippet of definition in the target file.
+ *  ->getRootObj()             Parse the whole source file and return the root object. It's typically a MAP object.
+ *  ->searchObj($type, $name)  Parse the source file until the corresponding object (mathing type and name) is found in the root's children.
+ *  ->searchObj(array($type_level_1=>$name1, $type_level_2=>$name2, ...))) Same as above but search with a path from the root object.
+ *  ->readString($txt)         Parse the whole string and return the root object.
+ *  ->replaceDef($srcPos, $newDef) Replace a snippet of definition in the source file and save the result in the target file (can be the same file).
  *                             The physical target file is immediately updated.
  *  ->setDebug($level)         Set the debug level for output info during the parsing of the source.
  *  ->sourceFile               The file containing the MapFile source to read.
@@ -89,6 +93,7 @@
  *  ->deleteChildren($type)  Delete all child of the given type.
  *  ->addChildren($arr)      Add one child or an array of children to the current object.
  *  ->asString()             Return the MapFile source for this object, including and its children.
+ *  ->getSrcPosition()       Return the position of the object in the source where it comes from.
  *  ->saveInFile($file)      Save the object in the file.
  * 
  *  ->escapeString($txt)     Escape a string. Do not use it for setProp()
@@ -146,9 +151,9 @@ class MapFileWorkshop {
     private $_searchResult = false;
     
     /**
-     * If debug mode is activated then informations is display concerning the parsing. 
+     * If debug mode is activated then informations is displayed concerning the parsing. 
      */
-    public $debug = 0;
+    public $debug = 0; // must be a constant of the class
     public $debug_n = 0;
     public $debug_max = 40000;
     
@@ -219,12 +224,11 @@ class MapFileWorkshop {
     }
     
     /**
-     * Replace an object in the source file and save the result in the target file.
+     * Replace a part of the source and save the result in the target file (can be the same file).
      *
-     * @param MapFileObject|array  $srcPos  The position of replacement in the source file.
-     *                                      It can be a MapFileObject given with :searchObj(),
-     *                                        or an array of position such as array($start, $end)
-     * @param MapFileObject|string $newDef The new definition to write i the target file.
+     * @param array $srcPos                Array of the two positions of replacement in the source file: array($pos_start, $pos_end) 
+     *                                     It is typically given by a MapFileObject using method ->getPosition()
+     * @param MapFileObject|string $newDef The new definition to write in the target file.
      *                                     It can be a string or a MapFileObject.
      *
      * @return boolean True if the definition is replaced in the file.
@@ -251,14 +255,11 @@ class MapFileWorkshop {
         }
         
         // Positions
-        if (is_array($pos)) {
-            $beg = $pos[0];
-            $end = $pos[1];
-        } elseif (is_object($pos)) {
-            $beg = $pos->srcPosBeg;
-            $end = $pos->srcPosEnd;
+        if (is_array($srcPos) && isset($srcPos[0]) && isset($srcPos[1])) {
+            $beg = $srcPos[0];
+            $end = $srcPos[1];
         } else {
-            return $this->raiseError("First argument is not a position.", __METHOD__);
+            return $this->raiseError("First argument is not a position. Array expected", __METHOD__);
         }
         
         // Search the optimal ending position
@@ -281,7 +282,7 @@ class MapFileWorkshop {
      * @param string $txt
      * @return array
      */
-    public function readSource($txt) {
+    public function readString($txt) {
 
         // Initialize the line counter
         $this->_line_init();
@@ -400,7 +401,7 @@ class MapFileWorkshop {
         
         $this->warnings = array();
         $txt = file_get_contents($this->sourceFile);
-        $obj = $this->readSource($txt);
+        $obj = $this->readString($txt);
         return $obj;
         
     }
@@ -1067,20 +1068,26 @@ class MapFileObject {
     private $_comment = '';
 
     /**
-     * Return the object corresponding to MapFile source.
+     * Return the object corresponding to string.
+	 * @param string  $txt   The string to parse.
+	 * @param integer $debug (optionnal) The debug level (default is none)
      * @return {MapFileObject|false}
      */
-    public static function getFromString($txt, $debug = 0) {
-        $map = new MapFileWorkshop(false, $debug);
-        return $map->readSource($txt);
+    public static function getFromString($txt, $debug = MapFileWorkshop::DEBUG_NO) {
+        $map = new MapFileWorkshop(false, false);
+		$map->setDebug($debug);
+        return $map->readString($txt);
     }
 
     /**
-     * Return the object corresponding to MapFile file.
+     * Return the object corresponding to file content.
+	 * @param string  $file   The file to parse.
+	 * @param integer $debug (optionnal) The debug level (default is none)
      * @return {MapFileObject|false}
      */
-    public static function getFromFile($file, $debug = 0) {
-        $map = new MapFileWorkshop($file, $debug);
+    public static function getFromFile($file, $debug = MapFileWorkshop::DEBUG_NO) {
+        $map = new MapFileWorkshop($file, false, $debug);
+		$map->setDebug($debug);
         return $map->getRootObj();
     }
     
@@ -1090,9 +1097,9 @@ class MapFileObject {
      * @return {string}
      */
     public static function checkError($txt, $sep = "\n") {
-        $map = new MapFileWorkshop(false);
+        $map = new MapFileWorkshop(false, false);
         $map->errorAsWarning = true;
-        $map->readSource($txt);
+        $map->readString($txt);
         return implode($sep, $map->warnings);
     }
     
@@ -1120,7 +1127,7 @@ class MapFileObject {
     }
     
     /**
-     * Apply a comment ot the object which will be display only with asString().
+     * Apply a comment ot the object. This comment is  is displayed only when using ->asString().
      */
     public function setComment($comment) {
         $comment = (string) $comment;
@@ -1307,9 +1314,23 @@ class MapFileObject {
         return $n;
     }
 
+    /**
+     * If the object is the result of a search, then return an array containing the start en end positions
+     *  of the object in the source.
+     * Otherwise return false.
+     */
+    public function getSrcPosition() {
+        
+        if ($this->srcPosBeg !== false) {
+            return array($this->srcPosBeg, $this->srcPosEnd);
+        } else {
+            return false;
+        }
+        
+    }
     
     /**
-     * Return a string definition of the object.
+     * Return the MapServer definition of the object as a string.
      * @param integer $level (optional) The number of text indentations. 
      */
     public function asString($level = false) {
