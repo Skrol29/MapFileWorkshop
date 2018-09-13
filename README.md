@@ -2,8 +2,10 @@
 
 MapFileWorkshop is a PHP library for reading, editing and creating MapFiles for MapServer version 5 to 7 and higher.
 It's peculiarity is that no regular expression is used. The MapFile is read with respect to
-the MapServer syntax, but without understanding the meaning. The dictionary of special keyswords
-is stored into a Synopsis class. The Synopsis class can be updated if needed in futur MapServer versions. 
+the MapServer syntax, but without understanding the meaning. That's why MapFileWorkshop is very fast and agile for reading and writing into files, and to manipulate MapFile snippets.
+
+The dictionary of special MapServer keyswords is stored into a Synopsis class. The Synopsis class can be updated
+if needed in futur MapServer versions.
 
 The MapFileWorkshop library is also a nice tool to find syntax errors in an existing MapFile.
 
