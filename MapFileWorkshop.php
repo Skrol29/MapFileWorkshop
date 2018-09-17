@@ -56,7 +56,7 @@
  *   new MapFileWorkshop($sourceFile = false, $targetFile = false) Create a new instance for working on the source file.
  *  ->getRootObj()             Parse the whole source file and return the root object. It's typically a MAP object.
  *  ->searchObj($type, $name)  Parse the source file until the corresponding object (mathing type and name) is found in the root's children.
- *  ->searchObj(array($type_level_1=>$name1, $type_level_2=>$name2, ...))) Same as above but search with a path from the root object.
+ *  ->searchObj(array($type_level_1=>$name1, $type_level_2=>$name2, ...))) Make several searches step by step (not hierachical)
  *  ->readString($txt)         Parse the whole string and return the root object.
  *  ->replaceDef($srcPos, $newDef) Replace a snippet of definition in the source file and save the result in the target file (can be the same file).
  *                             The physical target file is immediately updated.
@@ -146,9 +146,9 @@ class MapFileWorkshop {
     private $_currValues = array();
     
     private $_search = false;
-    private $_searchType = false;
-    private $_searchName = false;
-    private $_searchResult = false;
+    private $_srchType = false;
+    private $_srchName = false;
+    private $_srchResult = false;
     
     /**
      * If debug mode is activated then informations is displayed concerning the parsing. 
@@ -191,7 +191,7 @@ class MapFileWorkshop {
      * Search for the first object that matches the type and name.
      * Two possible syntaxes:
      *  1) searchObj($type, $name) : search for a child of the root object (root is usually a MAP object).
-     *  2) searchObj( array($type1=>$name1, $type2=>$name2, ...)) : search for a path from the root object
+     *  2) searchObj( array($type1=>$name1, $type2=>$name2, ...)) : make several searches step by step (not hierachical)
      */
     public function searchObj($type, $name = false) {
         
@@ -208,8 +208,8 @@ class MapFileWorkshop {
             if ($n == 1) {
                 // Search the first object in the file
                 $this->_search = true;
-                $this->_searchType = $type;
-                $this->_searchName = $name;
+                $this->_srchType = $type;
+                $this->_srchName = $name;
                 $obj = $this->_read_file();
             } else {
                 // Search sub-objects in the first object.
@@ -355,8 +355,8 @@ class MapFileWorkshop {
                     if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, $this->_debug_info_pos($pos) . " store info : word=$word, expr=$expr, delim=($delim)");
                     // Store the word or expression information into the buffer
                     $this->_store_info($word, $expr, $delim, $word_p1, $word_p2, $pos);
-                    if ($this->_search && ($this->_searchResult !== false)) {
-                        return $this->_searchResult;
+                    if ($this->_search && ($this->_srchResult !== false)) {
+                        return $this->_srchResult;
                     }
                     // Reset strings
                     $word = '';
@@ -453,7 +453,7 @@ class MapFileWorkshop {
                         if ($obj->supported) {
                             // It's an object
                             $obj->srcPosBeg = $p1;
-                            $this->_add_obj($obj);
+                            $this->_add_empty_obj($obj);
                         } else {
                             // It's a property
                             // (no property to commit)
@@ -593,10 +593,10 @@ class MapFileWorkshop {
         
         // Check if it is the searched object
         if ($this->_search) {
-            if ( ($this->_searchType == $obj->type)) {
-                if ($this->_searchName === $obj->getProp('NAME')) {
+            if ( ($this->_srchType == $obj->type)) {
+                if ($this->_srchName === $obj->getProp('NAME')) {
                     // End of the search.
-                    $this->_searchResult = $obj;
+                    $this->_srchResult = $obj;
                     return;
                 }
             }
@@ -611,7 +611,7 @@ class MapFileWorkshop {
     /**
      * Add a new object as the child of the current one, and set the new object as the current object.
      */
-    private function _add_obj($obj) {
+    private function _add_empty_obj($obj) {
 
         $obj->srcLineBeg = $this->_line_num;
 
@@ -622,7 +622,7 @@ class MapFileWorkshop {
             if ($this->_currObj) {
                 $obj->level = $this->_currObj->level + 1;
                 // In search mode we don't need previous child because they are out of the searched result.
-                if ($this->_search && ($this->_searchType == $obj->type)) {
+                if ($this->_search && ($this->_srchType == $obj->type)) {
                     $this->_currObj->deleteAllChildren();
                 }
                 $this->_currObj->addChildren($obj);
