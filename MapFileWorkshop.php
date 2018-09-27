@@ -1518,14 +1518,28 @@ class MapFileObject {
 
     /**
      * For debug only.
-     * Use this method before a var_export() on the object. This will avoid « Fatal error: Nesting level too deep ».
+     * Use this method to return a var_export() on the current object. This will avoid « Fatal error: Nesting level too deep ».
      */
-    public function prepareVarExport() {
-        $this->parent = false;
-        foreach ($this->children as $c) {
-            $c->prepareVarExport();
-        }
+    public function varExport() {
+		$this->_unsetParent();
+		$x = var_export($this, true);
+		$this->_setParent();
+		return $x;
     }
+    
+	private function _unsetParent() {
+		$this->parent = false;
+		foreach ($this->children as $c) {
+			$c->_unsetParent();
+		}
+	}
+
+	private function _setParent() {
+		$this->parent = false;
+		foreach ($this->children as $c) {
+			$c->_setParent();
+		}
+	}
     
     /**
      * Convert an hexa color number into a MapServer (RGB) color number.
