@@ -18,6 +18,7 @@
  * @version 0.11 beta 2018-06-29
  * @version 0.12 beta 2018-09-10
  * @version 0.13 beta 2018-09-12
+ * @version 0.14 beta 2018-09-28
  *
  * 
  * @example #1
@@ -50,11 +51,11 @@
  * --------------
  *   An object for reading/writing/search in an existing MapFile.
  *   It's better to use MapFileObject::getFromFile() for simply getting the root object in the file (usually a MAP object).
- *   Note that the file is actually loaded each time you call getRootObj() or searchObj().
+ *   Note that the file is actually loaded each time you call readFile() or searchObj().
  *
  * Synopsis:
  *   new MapFileWorkshop($sourceFile = false, $targetFile = false) Create a new instance for working on the source file.
- *  ->getRootObj()             Parse the whole source file and return the root object. It's typically a MAP object.
+ *  ->readFile()               Parse the whole source file and return the root object. It's typically a MAP object.
  *  ->searchObj($type, $name)  Parse the source file until the corresponding object (mathing type and name) is found in the root's children.
  *  ->searchObj(array($type_level_1=>$name1, $type_level_2=>$name2, ...))) Make several searches step by step (not hierachical)
  *  ->readString($txt)         Parse the whole string and return the root object.
@@ -180,19 +181,13 @@ class MapFileWorkshop {
     }
         
     /**
-     * Get the root object from the MapFile.
-     * It is expected to be a MAP object.
+     * Get the root object from the MapFile. (It is usually a MAP object).
+	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
      */
-    public function getRootObj() {
+    public function readFile($snippet = false) {
         $this->_search = false;
-        $snippetObj =  $this->_read_file();
-		if (isset($snippetObj->children[0])) {
-			return $snippetObj->children[0];
-		} else {
-			return false;
-		}
+        return $this->_read_file($snippet);
     }
-
     
     /**
      * Search for the first object that matches the type and name.
@@ -217,7 +212,7 @@ class MapFileWorkshop {
                 $this->_search = true;
                 $this->_srchType = $type;
                 $this->_srchName = $name;
-                $obj = $this->_read_file();
+                $obj = $this->_read_file(false);
             } else {
                 // Search sub-objects in the first object.
                 if ($obj) {
@@ -226,7 +221,11 @@ class MapFileWorkshop {
             }
         }
         
-        return $obj;
+		if ($obj && $obj->isSnippet()) {
+			return false;
+		} else {
+			return $obj;
+		}
         
     }
     
@@ -286,10 +285,13 @@ class MapFileWorkshop {
 
     /**
      * Read a structure from a string.
-     * @param  string $txt
+     * @param string  $txt        The string to parse
+	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
+	 *                                       It can be useful to return the snippet object if you know that $txt can contain several objects or property.
+	 *                                       Bu usually a snippet contain only object root object.
      * @return MapFileObject The type of the MapFileObject is always ':SNIPPET:'. The MAP object is usually a child of this object.
      */
-    public function readString($txt) {
+    public function readString($txt, $snippet = false) {
 
         // Initialize the line counter
         $this->_line_init();
@@ -388,10 +390,20 @@ class MapFileWorkshop {
 
         $this->_commit_check_end();
         
+		// Object to return
+		$obj = false;
+		if ($snippet) {
+			$obj = $this->_snippetObj;
+		} else {
+			if (isset($this->_snippetObj->children[0])) {
+				$obj = $this->_snippetObj->children[0];
+			}
+		}
+		
         // Copy warnings
-        $this->_snippetObj->warnings = $this->warnings;
+        $obj->warnings = $this->warnings;
         
-        return $this->_snippetObj;
+        return $obj;
         
     }
 
@@ -404,11 +416,11 @@ class MapFileWorkshop {
     }
     
     
-    private function _read_file() {
+    private function _read_file($snippet) {
         
         $this->warnings = array();
         $txt = file_get_contents($this->sourceFile);
-        $obj = $this->readString($txt);
+        $obj = $this->readString($txt, $snippet);
         return $obj;
         
     }
@@ -1071,25 +1083,27 @@ class MapFileObject {
     /**
      * Return the object corresponding to string.
 	 * @param string  $txt   The string to parse.
+	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
 	 * @param integer $debug (optionnal) The debug level (default is none)
      * @return {MapFileObject|false}
      */
-    public static function getFromString($txt, $debug = MapFileWorkshop::DEBUG_NO) {
+    public static function getFromString($txt, $snippet = false, $debug = MapFileWorkshop::DEBUG_NO) {
         $map = new MapFileWorkshop(false, false);
 		$map->setDebug($debug);
-        return $map->readString($txt);
+        return $map->readString($txt, $snippet);
     }
 
     /**
      * Return the object corresponding to file content.
 	 * @param string  $file   The file to parse.
+	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
 	 * @param integer $debug (optionnal) The debug level (default is none)
      * @return {MapFileObject|false}
      */
-    public static function getFromFile($file, $debug = MapFileWorkshop::DEBUG_NO) {
+    public static function getFromFile($file, $snippet = false, $debug = MapFileWorkshop::DEBUG_NO) {
         $map = new MapFileWorkshop($file, false, $debug);
 		$map->setDebug($debug);
-        return $map->getRootObj();
+        return $map->readFile($snippet);
     }
     
     /**
@@ -1100,7 +1114,7 @@ class MapFileObject {
     public static function checkError($txt, $sep = "\n") {
         $map = new MapFileWorkshop(false, false);
         $map->errorAsWarning = true;
-        $map->readString($txt);
+        $map->readString($txt, false);
         return implode($sep, $map->warnings);
     }
     
