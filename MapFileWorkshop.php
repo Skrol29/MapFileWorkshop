@@ -549,7 +549,7 @@ class MapFileWorkshop {
             }
         }
     }
-    
+   
     /**
      * Commit the buffer property to the buffer object.
      */
@@ -579,35 +579,7 @@ class MapFileWorkshop {
         }
     
     }
-    
-    /**
-     * Close the current object and move to the parent one.
-     */
-    private function _commit_obj($posEnd) {
-        
-        $obj =& $this->_currObj;
-        
-        // Save file positions
-        $obj->srcLineEnd = $this->_line_num;
-        $obj->srcPosEnd = $posEnd;
-        
-        // Check if it is the searched object
-        if ($this->_search) {
-            if ( ($this->_srchType == $obj->type)) {
-                if ($this->_srchName === $obj->getProp('NAME')) {
-                    // End of the search.
-                    $this->_srchResult = $obj;
-                    return;
-                }
-            }
-        }
-        
-        // Switch current object
-        $par = $obj->parent;
-        $this->_currObj =& $par;
-        
-    }
-    
+
     /**
      * Add a new object as the child of the current one, and set the new object as the current object.
      */
@@ -634,6 +606,34 @@ class MapFileWorkshop {
         
         if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "add new object : " . $this->_debugCurrObj());
 
+    }
+	
+    /**
+     * Close the current object and move to the parent one.
+     */
+    private function _commit_obj($posEnd) {
+        
+        $obj =& $this->_currObj;
+        
+        // Save file positions
+        $obj->srcLineEnd = $this->_line_num;
+        $obj->srcPosEnd = $posEnd;
+        
+        // Check if it is the searched object
+        if ($this->_search) {
+            if ( ($this->_srchType == $obj->type)) {
+                if ($this->_srchName === $obj->getProp('NAME')) {
+                    // End of the search.
+                    $this->_srchResult = $obj;
+                    return;
+                }
+            }
+        }
+        
+        // Switch current object
+        $par = $obj->parent;
+        $this->_currObj =& $par;
+        
     }
     
     /**
