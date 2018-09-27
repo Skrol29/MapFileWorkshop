@@ -1059,7 +1059,7 @@ class MapFileObject {
     public $level  = 0;            // Level of parentness in the hierarchy. Used for incremental displaying.
     
     public $hasEnd = true;
-    //public $isChild = false;
+    //public $several = false;
     
     public $srcPosBeg = false;
     public $srcPosEnd = false;
@@ -1118,7 +1118,7 @@ class MapFileObject {
         if ($syn = MapFileSynopsis::getSyn($type, $parent)) {
             $this->innerValCols = $syn['innerValCols'];
             $this->hasEnd  = $syn['hasEnd'];
-            //$this->isChild     = $syn['isChild'];
+            //$this->several     = $syn['several'];
             $this->supported = true;
         } else {
             $this->supported = false;
@@ -1634,85 +1634,38 @@ class MapFileSynopsis {
 		'innerValCols' => 0,       // The number of values expected for this keyword. 0 means the object has no inner value (it contains keywords).
 		'onlyForParents' => false, // List of keyworks for whom this one is special. For other parents, this one is considered has a simple keyword (a keyword with a single value).
 		'onlyIfNoParent' => false, // True means that this keyword is special only if it has no parent (as root or as a free object).
-		'isChild' => false,        // True means that they may be several of this object type in the same parent.
-		'children' => array(),     // Special keywords that can be child of this keyword.
+		'several' => false,        // True means that they may be several of this object type in the same parent.
 	);
     
     /**
      * List of special keywords and their properties.
      */
     private static $_special_kw = array(
-	  'CLASS' => array(
-		'isChild' => true,
-		'children' => array(
-		  'LABEL',
-		  'LEADER',
-		  'STYLE',
-		  'VALIDATION',
-		),
+	  'CLASS' => array( // children: LABEL, LEADER, STYLE, VALIDATION
+		'several' => true,
 	  ),
 	  'CLUSTER' => array(),
 	  'COLORRANGE' => array(
 		'hasEnd' => false,
 		'innerValCols' => 2, // supports only hexadecimal strings for now, (r g b) values not supported yet
-		'isChild' => true,
+		'several' => true,
 	  ),
 	  'COMPOSITE' => array(),
 	  'CONFIG' => array(
 		'hasEnd' => false,
 		'innerValCols' => 2,
-		'isChild' => true,
+		'several' => true,
 	  ),
-	  'FEATURE' => array(
-		'children' => array(
-		  'POINTS',
-		),
-	  ),
+	  'FEATURE' => array(), // children: POINTS
 	  'GRID' => array(),
 	  'JOIN' => array(),
-	  'LABEL' => array(
-		'children' => array(
-		  'STYLE',
-		),
+	  'LABEL' => array(), // children: STYLE
+	  'LAYER' => array( // children: CLUSTER, COMPOSITE, FEATURE, PROCESSING, GRID, JOIN, PROJECTION, VALIDATION, CLASS
+		'several' => true,
 	  ),
-	  'LAYER' => array(
-		'isChild' => true,
-		'children' => array(
-		  'CLUSTER',
-		  'COMPOSITE',
-		  'FEATURE',
-		  'PROCESSING',
-		  'GRID',
-		  'JOIN',
-		  'PROJECTION',
-		  'VALIDATION',
-		  'CLASS',
-		),
-	  ),
-	  'LEADER' => array(
-		'children' => array(
-		  'STYLE',
-		),
-	  ),
-	  'LEGEND' => array(
-		'children' => array(
-		  'LABEL',
-		),
-	  ),
-	  'MAP' => array(
-		'children' => array(
-		  'CONFIG',
-		  'OUTPUTFORMAT',
-		  'PROJECTION',
-		  'LEGEND',
-		  'QUERYMAP',
-		  'REFERENCE',
-		  'SCALEBAR',
-		  'SYMBOL',
-		  'WEB',
-		  'LAYER',
-		),
-	  ),
+	  'LEADER' => array(), // children: STYLE
+	  'LEGEND' => array(), // children: LABEL
+	  'MAP' => array(), // children: CONFIG, OUTPUTFORMAT, PROJECTION, LEGEND, QUERYMAP, REFERENCE, SCALEBAR, SYMBOL, WEB, LAYER
 	  'METADATA' => array(
 		'innerValCols' => 2,
 	  ),
@@ -1726,49 +1679,31 @@ class MapFileSynopsis {
 	  'PROCESSING' => array(
 		'hasEnd' => false,
 		'innerValCols' => 1,
-		'isChild' => true,
+		'several' => true,
 	  ),
 	  'PROJECTION' => array(
 		'innerValCols' => 1,
 	  ),
 	  'QUERYMAP' => array(),
 	  'REFERENCE' => array(),
-	  'SCALEBAR' => array(
-		'children' => array(
-		  'LABEL',
-		),
+	  'SCALEBAR' => array(), // children: LABEL
+	  'STYLE' => array(  // children: PATTERN, COLORRANGE
+		'several' => true,
 	  ),
-	  'STYLE' => array(
-		'isChild' => true,
-		'children' => array(
-		  'PATTERN',
-		  'COLORRANGE',
-		),
-	  ),
-	  'SYMBOL' => array(
+	  'SYMBOL' => array( // children: POINTS
 		'onlyForParents' => array(
 		  'MAP',
 		  'SYMBOLSET',
 		),
-		'isChild' => true,
-		'children' => array(
-		  'POINTS',
-		),
+		'several' => true,
 	  ),
-	  'SYMBOLSET' => array(
+	  'SYMBOLSET' => array( // children: SYMBOL
 		'onlyIfNoParent' => true,
-		'children' => array(
-		  'SYMBOL',
-		),
 	  ),
 	  'VALIDATION' => array(
 		'innerValCols' => 2,
 	  ),
-	  'WEB' => array(
-		'children' => array(
-		  'METADATA',
-		),
-	  ),
+	  'WEB' => array(), // children: METADATA
 	);
     
 	// Indicates if the dictionary has to be prepared.
@@ -1803,20 +1738,7 @@ class MapFileSynopsis {
             return false;
         }
     }
-
-    /**
-     * Return true if $childName is a knowed child of $parentName.
-     * @param  string $parentName The name of the parent tag.
-     * @param  string $childName  The name of the child  tag.
-     * @return boolean
-     */
-    static public function isChild($parentName, $childName) {
-        if (isset(self::$_special_kw[$parentName])) {
-            return (in_array($childName, self::$_special_kw[$parentName]['children']));
-        }
-        return false;
-    }
-    
+   
     /**
      * Return true if the tag is the one for ending blocks.
      * @param  string  @name
@@ -1859,13 +1781,6 @@ class MapFileSynopsis {
 				if (!$def['hasEnd']) {
 					if ($def['innerValCols'] <= 0) {
 						self::_raiseError("Synopsis ERROR: item '$k' has 'hasEnd' set to false wihtout a positive 'innerValCols'. You have to fix the Synopsis configuration.");
-					}
-				}
-				
-				// Check 'children'
-				foreach ($def['children'] as $child) {
-					if (!isset(self::$_special_kw[$child])) {
-						self::_raiseError("Synopsis ERROR: item '$k' has a child '$child' which is not defined as a special keyword. You have to fix the Synopsis configuration.");
 					}
 				}
 				
