@@ -138,7 +138,7 @@ class MapFileWorkshop {
     private $_fchar = '';   // first char of the last line-break
 
     // Buffer variables for converting strings to objects
-    private $_rootObj = false;
+    private $_snippetObj = false;
     private $_currObj = false;
     private $_currProp = false;
     private $_currPropSD = ''; // String delimitor for the property
@@ -168,13 +168,15 @@ class MapFileWorkshop {
      * @param {string}  $targetFile  (optional) The target file where to save modifications. By default it is $sourceFile. 
      */
     public function __construct($sourceFile = false, $targetFile = false) {
+		
         MapFileSynopsis::prepare();
+		
         $this->sourceFile = $sourceFile;
         $this->targetFile = $targetFile;
         if (!$this->targetFile) {
 			$this->targetFile = $this->sourceFile;
 		}
-
+		
     }
         
     /**
@@ -183,7 +185,12 @@ class MapFileWorkshop {
      */
     public function getRootObj() {
         $this->_search = false;
-        return $this->_read_file();
+        $snippetObj =  $this->_read_file();
+		if (isset($snippetObj->children[0])) {
+			return $snippetObj->children[0];
+		} else {
+			return false;
+		}
     }
 
     
@@ -279,8 +286,8 @@ class MapFileWorkshop {
 
     /**
      * Read a structure from a string.
-     * @param string $txt
-     * @return array
+     * @param  string $txt
+     * @return MapFileObject The type of the MapFileObject is always ':SNIPPET:'. The MAP object is usually a child of this object.
      */
     public function readString($txt) {
 
@@ -382,9 +389,9 @@ class MapFileWorkshop {
         $this->_commit_check_end();
         
         // Copy warnings
-        $this->_rootObj->warnings = $this->warnings;
+        $this->_snippetObj->warnings = $this->warnings;
         
-        return $this->_rootObj;
+        return $this->_snippetObj;
         
     }
 
@@ -529,9 +536,11 @@ class MapFileWorkshop {
      * Initilize the buffer variables.
      */
     private function _commit_init() {
-        
-        $this->_rootObj = false;
-        $this->_currObj = false;
+
+		$this->_snippetObj = new MapFileObject(':SNIPPET:');
+		$this->_snippetObj->level = -1;
+		
+        $this->_currObj = $this->_snippetObj;
         $this->_currProp = false;
         $this->_currPropSD = '';
         //$this->_currItemIsObj = false;
@@ -543,11 +552,9 @@ class MapFileWorkshop {
      * Add warnings if the parsing is ended in an invalid state.
      */
     private function _commit_check_end() {
-        if ($this->_rootObj) {
-            if ($this->_currObj !== false) {
-                $this->raiseError("At least on object is wrongly closed. Thus hierarchy may be erroneous. Check if the following object is correct: " . $this->_currObj->getBreadcrumb() . ".");
-            }
-        }
+		if (!$this->_currObj->isSnippet()) {
+			$this->raiseError("At least on object is wrongly closed. Thus hierarchy may be erroneous. Check if the following object is correct: " . $this->_currObj->getBreadcrumb() . ".");
+		}
     }
    
     /**
@@ -587,19 +594,13 @@ class MapFileWorkshop {
 
         $obj->srcLineBeg = $this->_line_num;
 
-        // // Set parenthood
-        if ($this->_rootObj === false) {
-            $this->_rootObj = $obj;
-        } else {
-            if ($this->_currObj) {
-                $obj->level = $this->_currObj->level + 1;
-                // In search mode we don't need previous child because they are out of the searched result.
-                if ($this->_search && ($this->_srchType == $obj->type)) {
-                    $this->_currObj->deleteAllChildren();
-                }
-                $this->_currObj->addChildren($obj);
-            }
-        }
+        // Set parenthood
+		$obj->level = $this->_currObj->level + 1;
+		// In search mode we don't need previous child because they are out of the searched result.
+		if ($this->_search && ($this->_srchType == $obj->type)) {
+			$this->_currObj->deleteAllChildren();
+		}
+		$this->_currObj->addChildren($obj);
 
         // Set the new object as current one
         $this->_currObj = $obj;
@@ -1499,6 +1500,14 @@ class MapFileObject {
      * Return a breadcrumb of the current object in its parent hierarchy.
      * @return {string}
      */
+    public function isSnippet() {
+		return ($this->type == ':SNIPPET:');
+	}
+
+    /**
+     * Return a breadcrumb of the current object in its parent hierarchy.
+     * @return {string}
+     */
     public function getBreadcrumb() {
         
         $sep = '/';
@@ -1506,7 +1515,9 @@ class MapFileObject {
         $obj = $this;
         $h = array();
         do {
-            $h[] = $obj->_short_descr();
+			if (!$obj->isSnippet()) {
+				$h[] = $obj->_short_descr();
+			}
             $obj = $obj->parent;
         } while ($obj);
         
@@ -1616,7 +1627,7 @@ class MapFileObject {
 class MapFileSynopsis {
 	
 	/**
-	 * Default properties for all specail keywords.
+	 * Default properties for all special keywords.
 	 */
     private static $_default = array(
 		'hasEnd' => true,          // false means the keyword has no END tag. Thus the end of the object is determined using property innerValCols.
