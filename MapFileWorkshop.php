@@ -12,14 +12,14 @@
  * So you have to use UPPERCASE keywords for managing objects, while your MapFile can stay case insensitive.
  *
  * @author Skrol29
- * @date   2018-09-12
+ * @date   2018-10-24
  * @version 0.09 beta 2017-04-24
  * @version 0.10 beta 2017-11-17
  * @version 0.11 beta 2018-06-29
  * @version 0.12 beta 2018-09-10
  * @version 0.13 beta 2018-09-12
  * @version 0.14 beta 2018-09-28
- *
+ * @version 0.15 beta 2018-10-24
  * 
  * @example #1
  *
@@ -123,8 +123,8 @@ class MapFileWorkshop {
     const DEBUG_DETAILED = 2;
     const DEBUG_DEEP = 3;
     
-    const STR1 = '"';  // String delimiter  #1
-    const STR2 = "'";  // String delimiter  #2
+    const STR1 = '"';  // String delimiter  #1
+    const STR2 = "'";  // String delimiter  #2
     const ESC  = '\\'; // String escaper
 
     // Last loaded file
@@ -135,7 +135,7 @@ class MapFileWorkshop {
     
     // Variables for couting lines
     private $_line_num = 0; // current line number
-    private $_npos = -1;    // (position + 1)  of the last line-break
+    private $_npos = -1;    // « position + 1 » of the last line-break
     private $_fchar = '';   // first char of the last line-break
 
     // Buffer variables for converting strings to objects
@@ -232,14 +232,15 @@ class MapFileWorkshop {
     /**
      * Replace a part of the source and save the result in the target file (can be the same file).
      *
-     * @param array $srcPos                Array of the two positions of replacement in the source file: array($pos_start, $pos_end) 
-     *                                     It is typically given by a MapFileObject using method ->getPosition()
-     * @param MapFileObject|string $newDef The new definition to write in the target file.
-     *                                     It can be a string or a MapFileObject.
+     * @param array                $srcPos  Array of the two positions of replacement in the source file: array($pos_start, $pos_end) 
+     *                                      It is typically given by a MapFileObject using method ->getPosition()
+     * @param MapFileObject|string $newDef  The new definition to write in the target file.
+     *                                      It can be a string or a MapFileObject.
+     * @param boolean              $protect (optional) protect the snippet to insert from beeing mixed with surrounding words or comments. 
      *
      * @return boolean True if the definition is replaced in the file.
      */
-    public function replaceDef($srcPos, $newDef) {
+    public function replaceDef($srcPos, $newDef, $protect = true) {
         
         // check source file
         if ($this->sourceFile === false) {
@@ -256,6 +257,7 @@ class MapFileWorkshop {
         // Get the new object definition
         if (is_object($newDef)) {
             $str = $newDef->asString();
+            $protect = true;
         } else {
             $str = $newDef;
         }
@@ -264,14 +266,26 @@ class MapFileWorkshop {
         if (is_array($srcPos) && isset($srcPos[0]) && isset($srcPos[1])) {
             $beg = $srcPos[0];
             $end = $srcPos[1];
+        } elseif (is_numeric($srcPos)) {
+            $beg = $srcPos;
+            $end = $srcPos - 1; // in order to have a replace length = 0
         } else {
-            return $this->raiseError("First argument is not a position. Array expected", __METHOD__);
+            return $this->raiseError("First argument is not a position. Array or Integer expected", __METHOD__);
         }
         
-        // Search the optimal ending position
-        $pos_stop = strlen($txt);
-        $end = $this->_sympatic_pos_end($txt, $end, $pos_stop);
-        $beg = $this->_sympatic_pos_beg($txt, $beg);
+        // Protect the snippet to insert ($str) from words or comments in the current source ($txt)
+        if ($protect) {
+            if (!$this->_is_safe_pos($txt, $beg, -1)) {
+                if (!$this->_is_safe_pos($str, 0, +1)) {
+                    $str = self::NL . $str;
+                }
+            }
+            if (!$this->_is_safe_pos($txt, $end, +1)) {
+                if (!$this->_is_safe_pos($str, strlen($str), -1)) {
+                    $str = $str . self::NL;
+                }
+            }
+        }
 
         // Replace the block
         $txt = substr_replace($txt, $str, $beg, $end - $beg + 1);
@@ -462,7 +476,7 @@ class MapFileWorkshop {
                     if (MapFileSynopsis::isEnd($name)) {
                         // It's the end of an object
                         if ($this->_currObj) {
-                            $this->_commit_obj($p2);
+                            $this->_commit_obj($p2, $p1);
                         } else {
                             return $this->raiseError("An END tag is found outside the scope of a block.");
                         }
@@ -527,7 +541,7 @@ class MapFileWorkshop {
                 if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "new inner value : " . $this->_debugCurrObj());
                 if ( (!$obj->hasEnd) && (count($obj->innerValues) >= $obj->innerValCols) ) {
                     if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "close object because of an omitted END after {$this->_currObj->innerValCols} inner values.");
-                    $this->_commit_obj($posEnd);
+                    $this->_commit_obj($posEnd, $posEnd);
                 }
             }
         } else {
@@ -624,13 +638,14 @@ class MapFileWorkshop {
     /**
      * Close the current object and move to the parent one.
      */
-    private function _commit_obj($posEnd) {
+    private function _commit_obj($posEnd, $posBottom) {
         
         $obj =& $this->_currObj;
         
         // Save file positions
         $obj->srcLineEnd = $this->_line_num;
         $obj->srcPosEnd = $posEnd;
+        $obj->srcPosBottom = $posBottom;
         
         // Check if it is the searched object
         if ($this->_search) {
@@ -663,15 +678,15 @@ class MapFileWorkshop {
         if ( ($x === self::NL) || ($x === self::CR) ) {
             
             if ( ($pos == $this->_npos) && ($x !== $this->_fchar) ) {
-                // Note: a line brak can be one of the following: CR+NL, NL+CR, NL or LB.
+                // Note: a line-break can be one of the following: CR+NL, NL+CR, NL or CR.
                 // So if the current char is just after a previous line-break char, and if the char is different from the first char of the line-break. 
                 // then it is the same line-break.
             } else {
-                $this->_line_num++;
-                $this->_fchar = $x;
+                $this->_line_num++; 
+                $this->_fchar = $x; // first char of the last line-break
             }
             
-            $this->_npos = $pos + 1;
+            $this->_npos = $pos + 1; // « position + 1 » of the last line-break
             
             return true;
         }
@@ -749,66 +764,47 @@ class MapFileWorkshop {
     }
     
     /**
-     * Find the sympatic ending position for a MapServer tag.
-     * 
-     * @param string  $txt
-     * @param integer $pos 
-     * @param integer $pos_stop
-     *
-     * @return integer
+     * Returne true if the char is a line break
      */
-    private function _sympatic_pos_end($txt, $pos, $pos_stop) {
+    private function _is_char_lb($x) {
+        return ($x === self::NL) || ($x === self::CR);
+    }
+    
+    /**
+     * Return true if the position in the text is safe for inserting a snippet before ($step = -1) or after ($step = +1).
+     * 
+     * @param string  $txt       string to scan
+     * @param integer $pos       starting position
+     * @param integer $step      +1 or -1
+     *
+     * @return boolean
+     */
+    private function _is_safe_pos($txt, $pos, $step) {
         
-        $pos++;
-        $comm = false;
+        $pos = $pos + $step;
+        $pos_stop = strlen($txt);
         
-        while ($pos < $pos_stop) {
+        while ( (0 <= $pos) && ($pos < $pos_stop) ) {
             
             $x = $txt[$pos];
             
-            if ( ($x === self::NL) || ($x === self::CR) ) {
-                // a line-break stop the end of the line
-                return $pos - 1;
-            } elseif ($comm) {
-                // only a line-break can ends a comment
-            } elseif ($x === self::COMMENT) {
-                $comm = true;
+            if ( $this->_is_char_lb($x) ) {
+                return true;
             } elseif ($this->_is_like_ws($x)) {
-                // white-spaces and tabs are accepeted
+                // white-spaces and tabs are pending
             } else {
                 // any other characters are not accpeted
-                return $pos - 1;
+                return false;
             }
             
-            $pos++;
+            $pos = $pos + $step;
             
         }
         
         // At this point we met the end of the text.
-        return $pos_stop - 1;
+        return true;
         
     }
-    
-    private function _sympatic_pos_beg($txt, $pos) {
-
-        $pos--;
-        
-        while ($pos >= 0) {
-            $x = $txt[$pos];
-            if ($this->_is_like_ws($x)) {
-                // white-spaces and tabs are accepeted
-                $pos--;
-            } else {
-                // any other characters are not accpeted
-                return $pos + 1;
-            }
-        }
-        
-        // At this point we met the start of the text.
-        return 0;
-
-    }
-    
     
     /**
      * Read an expression which is a string delimited with a character.
@@ -1075,6 +1071,7 @@ class MapFileObject {
     
     public $srcPosBeg = false;
     public $srcPosEnd = false;
+    public $srcPosBottom = false;
     public $srcLineBeg = false;
     public $srcLineEnd = false;
     
@@ -1341,6 +1338,17 @@ class MapFileObject {
         } else {
             return false;
         }
+        
+    }
+
+    /**
+     * If the object is the result of a search, then return the bottom position
+     *  of the object in the source. That is the position just before the END word.
+     * Otherwise return false.
+     */
+    public function getSrcBottom() {
+        
+        return $this->srcPosBottom;
         
     }
     
@@ -1744,7 +1752,9 @@ class MapFileSynopsis {
                         return false;
                     }
                 } elseif ($syn['onlyIfNoParent']) {
-                    return false;
+                    if (!$parent->isSnippet()) {
+                        return false;
+                    }
                 }
             }
             return $syn;
