@@ -61,7 +61,7 @@
  *  ->readString($txt)         Parse the whole string and return the root object.
  *  ->replaceDef($srcPos, $newDef) Replace a snippet of definition in the source file and save the result in the target file (can be the same file).
  *                             The physical target file is immediately updated.
- *  ->setDebug($level)         Set the debug level for output info during the parsing of the source.
+ *  ->setDebug($debug_level)   Set the debug level for output info during the parsing of the source.
  *  ->sourceFile               The file containing the MapFile source to read.
  *  ->targetFile               The file to save modified source.
  *  ->warnings                 (array) Warnings messages collected during the parsing.
@@ -422,10 +422,10 @@ class MapFileWorkshop {
 
     /**
      * Set the debug level.
-     * @param {integer} $level 
+     * @param {integer} $debug_level 
      */
-    public function setDebug($level) {
-        $this->debug = $level;
+    public function setDebug($debug_level) {
+        $this->debug = $debug_level;
     }
     
     
@@ -1015,12 +1015,12 @@ class MapFileWorkshop {
     
     /**
      * Display a debug information.
-     * @param {integer} $level  Level of debug needed to display this message.
+     * @param {integer} $debug_level  Level of debug needed to display this message.
      * @param {string}  $caller The function calling the debug.
      * @param {string}  $msg    The message to display.
      */
-    private function _debugInfo($level, $caller, $msg) {
-        if ($this->debug >= $level) {
+    private function _debugInfo($debug_level, $caller, $msg) {
+        if ($this->debug >= $debug_level) {
             if ($this->debug_n == 0) echo "<br>\n";
             echo "[{$caller}] " . $msg . "<br>\n";
             $this->debug_n++;
@@ -1077,12 +1077,12 @@ class MapFileObject {
      * Return the object corresponding to string.
 	 * @param string  $txt   The string to parse.
 	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
-	 * @param integer $debug (optionnal) The debug level (default is none)
+	 * @param integer $debug_level (optionnal) The debug level (default is none)
      * @return {MapFileObject|false}
      */
-    public static function getFromString($txt, $snippet = false, $debug = MapFileWorkshop::DEBUG_NO) {
+    public static function getFromString($txt, $snippet = false, $debug_level = MapFileWorkshop::DEBUG_NO) {
         $map = new MapFileWorkshop(false, false);
-		$map->setDebug($debug);
+		$map->setDebug($debug_level);
         return $map->readString($txt, $snippet);
     }
 
@@ -1090,12 +1090,12 @@ class MapFileObject {
      * Return the object corresponding to file content.
 	 * @param string  $file   The file to parse.
 	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
-	 * @param integer $debug (optionnal) The debug level (default is none)
+	 * @param integer $debug_level (optionnal) The debug level (default is none)
      * @return {MapFileObject|false}
      */
-    public static function getFromFile($file, $snippet = false, $debug = MapFileWorkshop::DEBUG_NO) {
-        $map = new MapFileWorkshop($file, false, $debug);
-		$map->setDebug($debug);
+    public static function getFromFile($file, $snippet = false, $debug_level = MapFileWorkshop::DEBUG_NO) {
+        $map = new MapFileWorkshop($file, false, $debug_level);
+		$map->setDebug($debug_level);
         return $map->readFile($snippet);
     }
     
@@ -1350,18 +1350,18 @@ class MapFileObject {
     
     /**
      * Return the MapServer definition of the object as a string.
-     * @param integer $level (optional) The number of text indentations. 
+     * @param integer $indent (optional) The number of text indentations. 
      */
-    public function asString($level = false) {
+    public function asString($indent = false) {
         
         static $nl = "\n";
         static $step = '  '; 
         
-        if ($level === false) {
-            $level = $this->level;
+        if ($indent === false) {
+            $indent = $this->level;
         }
         
-        $incr = str_repeat($step, $level);
+        $incr = str_repeat($step, $indent);
         $end = $this->hasEnd;
         
         // Type
@@ -1412,7 +1412,7 @@ class MapFileObject {
             if ($hasKids && $obj->hasEnd) {
                 $str .= $nl;
             }
-            $str .= $nl . $obj->asString($level + 1);
+            $str .= $nl . $obj->asString($indent + 1);
         }
         
         // End
