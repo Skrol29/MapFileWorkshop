@@ -143,7 +143,6 @@ class MapFileWorkshop {
     private $_currObj = false;
     private $_currProp = false;
     private $_currPropSD = ''; // String delimitor for the property
-    //private $_currItemIsObj = false;
     private $_currValues = array();
     
     private $_search = false;
@@ -311,7 +310,7 @@ class MapFileWorkshop {
         $this->_line_init();
         
         // Initialise properties
-        $this->_commit_init();
+        $this->_read_init();
         
         $pos = 0;
         
@@ -517,7 +516,6 @@ class MapFileWorkshop {
             } else {
                 $this->_currValues[] = $expr;
                 $this->_currPropSD = $delim; // avoid the object conversion
-                //$this->_currItemIsObj = false; // avoid the object conversion
                 if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "new delimited value : " . $this->_debugCurrObj());
             }
             
@@ -561,7 +559,7 @@ class MapFileWorkshop {
     /**
      * Initilize the buffer variables.
      */
-    private function _commit_init() {
+    private function _read_init() {
 
 		$this->_snippetObj = new MapFileObject(':SNIPPET:');
 		$this->_snippetObj->level = -1;
@@ -569,7 +567,6 @@ class MapFileWorkshop {
         $this->_currObj = $this->_snippetObj;
         $this->_currProp = false;
         $this->_currPropSD = '';
-        //$this->_currItemIsObj = false;
         $this->_currValues = array();
 
     }
@@ -604,7 +601,6 @@ class MapFileWorkshop {
                 
                 $this->_currProp = false;
                 $this->_currPropSD = '';
-                //$this->_currItemIsObj = false;
                 $this->_currValues = array();
                 
             }
