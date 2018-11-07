@@ -85,7 +85,7 @@
  *  ->countChildren($type)   Return the number of children of the given type.
  *  ->getChild($type, $nameOrIndex = 1, $nameProp = 'NAME') Return the object corresponding to the criterias.
  *  ->getChildren($type)     Return an array of all children object of the given type. 
- *  ->deleteChildren($type)  Delete all child of the given type.
+ *  ->deleteChildrenByType($type)  Delete all child of the given type.
  *  ->addChildren($arr)      Add one child or an array of children to the current object.
  *  ->asString()             Return the MapFile source for this object, including and its children.
  *  ->getSrcPosition()       Return the position of the object in the source where it comes from.
@@ -1361,7 +1361,7 @@ class MapFileObject {
      * @param string $type The type to search (case sentitive).
      * @return integer The number of deleted children.
      */
-    public function deleteChildren($type) {
+    public function deleteChildrenByType($type) {
         $n = 0;
         for ($i = count($this->children) -1; $i >= 0 ; $i--) {
             $obj = $this->children[$i];
