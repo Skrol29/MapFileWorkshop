@@ -1,15 +1,15 @@
 <?php
 
 /**
- * MapFileWorkshop is a PHP library for reading, editing and creating MapFiles for MapServer version 5 to 7 and higher.
+ * MapFileWorkshop is a PHP library for reading, searching, editing and creating MapFiles for MapServer version 5 to 7 and higher.
  * It's peculiarity is that no regular expression is used. The MapFile is read with respect to
  *  the MapServer syntax, but without understanding the meaning. The dictionary of special keyswords
  *  is stored into a Synopsis class. The Synopsis class can be updated if needed in futur MapServer versions. 
  *
  * The MapFileWorkshop library is also a nice tool to find syntax errors in an existing MapFile.
  *
- * This library can read MapFile sources with case insensitive keyworks, but all objects of this library will be modelised with UPPERCASE keywords.
- * So you have to use UPPERCASE keywords for managing objects, while your MapFile can stay case insensitive.
+ * This library is case insensitive for reading a source file.
+ * But when using MapFileWorkshop and MapFileObject classes, all MapServer keywords must be specified UPPERCASE.
  *
  * @author Skrol29
  * @date   2018-10-24
@@ -20,6 +20,7 @@
  * @version 0.13 beta 2018-09-12
  * @version 0.14 beta 2018-09-28
  * @version 0.15 beta 2018-10-24
+ * @version 0.20 beta 2018-11-06
  * 
  * @example #1
  *
@@ -31,7 +32,7 @@
  * @example #2
  *
  * $ws = new MapFileWorkshop('my_source_file.map'); // the source file is not sought at this point
- * $layer = $ws->searchObj('LAYER', 'my_sweet_layer'); // stop the reading when the object is found, load only the found object in memory.
+ * $layer = $ws->searchObj('MAP/LAYER:my_layer');   // search for a object in the source
  * $class = $layer->getChild('CLASS', 1);
  * $style = $class->getChild('STYLE', 1);
  * $opacity = $style->getProp('OPACITY');
@@ -39,25 +40,18 @@
  * $style->setComment("modified by the demo");
  * $ws->replaceDef($style->getSrcPosition(), $style); // replace the object in the target file
  *
- * --------
- * Classes:
- * --------
- * MapFileObject:   Represents a MapFile object (MAP, LAYER, CLASS, STYLE, ....) for reading or editing.
- * MapFileWorkshop: A toolbox for fast search and for replace into a physical MapFile.
- * MapFileSynopsis: The core class for managing the dictionary of special keywords.
  *
- * --------------
- * MapFileWorkshop class:
- * --------------
+ * ---------------------
+ * class MapFileWorkshop
+ * ---------------------
  *   An object for reading/writing/search in an existing MapFile.
- *   It's better to use MapFileObject::getFromFile() for simply getting the root object in the file (usually a MAP object).
- *   Note that the file is actually loaded each time you call readFile() or searchObj().
+ *   It's better to use MapFileObject::getFromFile() for simply getting the root object in a file (usually a MAP object).
+ *   Note that the file contents is actually loaded each time you call readFile() or searchObj().
  *
  * Synopsis:
  *   new MapFileWorkshop($sourceFile = false, $targetFile = false) Create a new instance for working on the source file.
  *  ->readFile()               Parse the whole source file and return the root object. It's typically a MAP object.
- *  ->searchObj($type, $name)  Parse the source file until the corresponding object (mathing type and name) is found in the root's children.
- *  ->searchObj(array($type_level_1=>$name1, $type_level_2=>$name2, ...))) Make several searches step by step (not hierachical)
+ *  ->searchObj($str_path)     Parse the source file until the corresponding object is found.
  *  ->readString($txt)         Parse the whole string and return the root object.
  *  ->replaceDef($srcPos, $newDef) Replace a snippet of definition in the source file and save the result in the target file (can be the same file).
  *                             The physical target file is immediately updated.
@@ -66,9 +60,9 @@
  *  ->targetFile               The file to save modified source.
  *  ->warnings                 (array) Warnings messages collected during the parsing.
  *
- * --------------
- * MapFileObject class:
- * --------------
+ * -------------------
+ * class MapFileObject
+ * -------------------
  *   Represents a MapFile object, with its properties and children objects.
  *
  * Synopsis:
@@ -101,9 +95,9 @@
  *  ::colorHex2Ms()          Convert a '#hhhhhh' color into 'r g b'.   Note that MapServer supports format '#hhhhhh'.
  *  ::colorMs2Hex()          Convert a 'r g b'   color into '#hhhhhh'. Note that MapServer supports format '#hhhhhh'.
  * 
- * --------------
- * MapFileSynopsis class:
- * --------------
+ * ---------------------
+ * class MapFileSynopsis
+ * ---------------------
  *  It's a core class that contains the dictionary of MapFile special keyswords.
  *  Keywords that are not in the synopsis are supposed to be simple MapFile properties (a keyword with a single value).
  * 
@@ -137,18 +131,22 @@ class MapFileWorkshop {
     private $_line_num = 0; // current line number
     private $_npos = -1;    // « position + 1 » of the last line-break
     private $_fchar = '';   // first char of the last line-break
-
+	private $_continue = false;
+	
     // Buffer variables for converting strings to objects
-    private $_snippetObj = false;
     private $_currObj = false;
     private $_currProp = false;
     private $_currPropSD = ''; // String delimitor for the property
     private $_currValues = array();
+
+	// Contain the hierachy of objects that has not been complety read. They are not yet attached to their parent.
+	private $_currPath = false;
+	private $_currIdx = false;
     
-    private $_search = false;
-    private $_srchType = false;
-    private $_srchName = false;
-    private $_srchResult = false;
+    private $_srchOk = false;
+    private $_srchPath = false;
+    private $_srchLastIdx = false;
+    private $_srchFound = false;
     
     /**
      * If debug mode is activated then informations is displayed concerning the parsing. 
@@ -184,46 +182,35 @@ class MapFileWorkshop {
 	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
      */
     public function readFile($snippet = false) {
-        $this->_search = false;
+        $this->_srchOk = false;
         return $this->_read_file($snippet);
     }
     
     /**
-     * Search for the first object that matches the type and name.
-     * Two possible syntaxes:
-     *  1) searchObj($type, $name) : search for a child of the root object (root is usually a MAP object).
-     *  2) searchObj( array($type1=>$name1, $type2=>$name2, ...)) : make several searches step by step (not hierachical)
+     * Search for the first object that matches the path.
+     *
+	 * @param string $str_path Example : 'MAP/LAYER:my_layer'
+	 *                         The target object must be defined with its hierarchy.
+	 *                         Each item can be : 
+	 *                         - a simple type (examples : 'MAP', 'LAYER', ...)
+	 *                         - a type with a child numerical index - first index is 1 - ( examples : 'LAYER:1', 'CLASS:1', ...)  
+	 *                         - a type with a name (example : 'LAYER:my_layer')
      */
-    public function searchObj($type, $name = false) {
+    public function searchObj($str_path) {
         
-        if (is_string($type)) {
-            $list = array($type=>$name);
-        } else {
-            $list = $type;
-        }
-
-        $n = 0;
-        $obj = false;
-        foreach ($list as $type => $name) {
-            $n++;
-            if ($n == 1) {
-                // Search the first object in the file
-                $this->_search = true;
-                $this->_srchType = $type;
-                $this->_srchName = $name;
-                $obj = $this->_read_file(false);
-            } else {
-                // Search sub-objects in the first object.
-                if ($obj) {
-                    $obj = $obj->getChild($type, $name);
-                }
-            }
-        }
-        
-		if ($obj && $obj->isSnippet()) {
-			return false;
-		} else {
+		
+		$this->_srchPath = $this->_get_search_path($str_path);
+		$this->_srchLastIdx = count($this->_srchPath) - 1;
+		
+		$this->_srchOk = ($this->_srchLastIdx > 1);
+		$this->_srchFound = false;
+		
+		if ($this->_srchOk) {
+			$obj = $this->_read_file(false);
+		    $this->_srchOk = false;
 			return $obj;
+		} else {
+			return false;
 		}
         
     }
@@ -332,7 +319,8 @@ class MapFileWorkshop {
         $n_max = 200000;
         if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "Start of the source.");
 
-        while ($pos < $pos_stop) {
+		$this->_continue = ($pos < $pos_stop);
+        while ($this->_continue) {
             
             // Read char
             $x = $txt[$pos];
@@ -377,9 +365,6 @@ class MapFileWorkshop {
                     if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, $this->_debug_info_pos($pos) . " store info : word=$word, expr=$expr, delim=($delim)");
                     // Store the word or expression information into the buffer
                     $this->_store_info($word, $expr, $delim, $word_p1, $word_p2, $pos);
-                    if ($this->_search && ($this->_srchResult !== false)) {
-                        return $this->_srchResult;
-                    }
                     // Reset strings
                     $word = '';
                     $expr = false;
@@ -396,28 +381,44 @@ class MapFileWorkshop {
             if ($move) {
                 $pos++;
             }
+			
+			if ($pos >= $pos_stop) {
+				$this->_continue = false;
+			}
             
         }
+
+		// Search result
+		if ($this->_srchOk && $this->_srchFound) {
+			return $this->_currObj;
+		}
         
         if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "End of the source.");
 
-        $this->_commit_check_end();
+		// Add warning if we are not back to the first item of the path
+		if ($this->_currIdx != 0) {
+			return $this->raiseError("The end of the source is met with {$this->_currIdx} missing block endings.");
+		}
         
 		// Object to return
-		$obj = false;
-		if ($snippet) {
-			$obj = $this->_snippetObj;
+		$result = false;
+		if ($this->_srchOk) {
+			// not found
+		} elseif ($snippet) {
+			$result = $this->_currObj;
 		} else {
-			if (isset($this->_snippetObj->children[0])) {
-				$obj = $this->_snippetObj->children[0];
+			if (isset($this->_currObj->children[0])) {
+				$result = $this->_currObj->children[0];
 			}
 		}
 		
         // Copy warnings
-        $obj->warnings = $this->warnings;
+		if ($result !== false) {
+			$result->warnings = $this->warnings;
+		}
         
-        return $obj;
-        
+        return $result;
+
     }
 
     /**
@@ -428,7 +429,9 @@ class MapFileWorkshop {
         $this->debug = $debug_level;
     }
     
-    
+    /**
+	 * @param boolean $snippet True means the function return the SNIPPET object, fals means its first child (usually a MAP object).
+	 */
     private function _read_file($snippet) {
         
         $this->warnings = array();
@@ -561,23 +564,17 @@ class MapFileWorkshop {
      */
     private function _read_init() {
 
-		$this->_snippetObj = new MapFileObject(':SNIPPET:');
-		$this->_snippetObj->level = -1;
-		
-        $this->_currObj = $this->_snippetObj;
+		$this->_currObj = new MapFileObject(':SNIPPET:');
         $this->_currProp = false;
         $this->_currPropSD = '';
         $this->_currValues = array();
 
-    }
+		// The item at index 0 is always the root snippet object.
+		$this->_currPath = array(
+			0 => array('idx' => 0, 'match' => true, 'obj' => $this->_currObj),
+		);
+		$this->_currIdx = 0;
 
-    /**
-     * Add warnings if the parsing is ended in an invalid state.
-     */
-    private function _commit_check_end() {
-		if (!$this->_currObj->isSnippet()) {
-			$this->raiseError("At least on object is wrongly closed. Thus hierarchy may be erroneous. Check if the following object is correct: " . $this->_currObj->getBreadcrumb() . ".");
-		}
     }
    
     /**
@@ -616,16 +613,13 @@ class MapFileWorkshop {
 
         $obj->srcLineBeg = $this->_line_num;
 
-        // Set parenthood
-		$obj->level = $this->_currObj->level + 1;
-		// In search mode we don't need previous child because they are out of the searched result.
-		if ($this->_search && ($this->_srchType == $obj->type)) {
-			$this->_currObj->deleteAllChildren();
-		}
-		$this->_currObj->addChildren($obj);
-
         // Set the new object as current one
-        $this->_currObj = $obj;
+        $this->_currObj =& $obj;
+
+		$match = $this->_currPath[$this->_currIdx]['match'];
+		
+		$this->_currIdx++;
+		$this->_currPath[$this->_currIdx] = array('idx' => $this->_currIdx, 'match' => $match, 'obj' => $obj);
         
         if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "add new object : " . $this->_debugCurrObj());
 
@@ -642,21 +636,28 @@ class MapFileWorkshop {
         $obj->srcLineEnd = $this->_line_num;
         $obj->srcPosEnd = $posEnd;
         $obj->srcPosBottom = $posBottom;
-        
-        // Check if it is the searched object
-        if ($this->_search) {
-            if ( ($this->_srchType == $obj->type)) {
-                if ($this->_srchName === $obj->getProp('NAME')) {
-                    // End of the search.
-                    $this->_srchResult = $obj;
-                    return;
-                }
-            }
-        }
-        
-        // Switch current object
-        $par = $obj->parent;
-        $this->_currObj =& $par;
+
+		if ($this->_currIdx == 0) {
+			return $this->raiseError("The source contains too much block endings. The first block ending out of the scope is at line {$obj->srcLineEnd}, but the wrong closing can be anywhere before.");
+		}
+		
+		$match = true;
+		if ($this->_srchOk) {
+			$match = $this->_update_curr_match();
+			if ($this->_srchFound) {
+				return;
+			}
+		}
+		
+		// attach the current object to its parent
+		if ($match) {
+			$this->_currPath[$this->_currIdx-1]['obj']->addChildren($obj);
+		}
+		
+		// go back to parent item		
+		unset($this->_currPath[$this->_currIdx]);
+		$this->_currIdx--;
+		$this->_currObj =& $this->_currPath[$this->_currIdx]['obj'];
         
     }
     
@@ -955,7 +956,79 @@ class MapFileWorkshop {
         return $this->raiseError("Ending expression delimitor '{$delim_end}' is found.");
         
     }
-   
+
+	/**
+	 * Convert a string path into a internal path format.
+     * That is an array with items as array('type'=>..., 'ref'=>..., 'isnum'=>...)
+	 */
+    private function _get_search_path($str_path) {
+		
+		$srchPath = array(
+			array('type' => ':SNIPPET:', 'ref' => 1),
+		);
+		
+        if (is_string($str_path)) {
+			$items = explode('/', $str_path);
+		    foreach ($items as $x) {
+			    $x = explode(':', $x);
+			    if (isset($x[1])) {
+					$srchPath[] = array('type'=> $x[0], 'ref' => $x[1]);
+			    } else {
+					$srchPath[] = array('type'=> $x[0], 'ref' => 1);
+			    }
+		    }
+        } else {
+		    foreach ($str_path as $k => $v) {
+			    if (is_numeric($k)) {
+					$srchPath[] = array('type'=> $v, 'ref' => 1);
+			    } else {
+					$srchPath[] = array('type'=> $k, 'ref' => $v);
+			    }
+		    }
+        }
+		
+		foreach ($srchPath as &$rec) {
+			$rec['isnum'] = is_numeric($rec['ref']);
+		}
+		
+		return $srchPath;
+		
+	}
+	
+	private function _update_curr_match() {
+		
+		$match = $this->_currPath[$this->_currIdx]['match'];
+		
+		if ($match) {
+			if ($this->_currIdx <= $this->_srchLastIdx) {
+				// check the matching
+				$chk = $this->_srchPath[$this->_currIdx];
+				if ($chk['type'] == $this->_currObj->type) {
+					if ($chk['isnum']) {
+						$parent = $this->_currPath[$this->_currIdx-1]['obj'];
+						$match = ($chk['ref'] == 1 + $parent->countChildren($chk['type']));
+					} else {
+						$match = ($chk['ref'] == $this->_currObj->getProp('NAME'));
+					}
+					if ($match && ($this->_currIdx == $this->_srchLastIdx)) {
+						$this->_continue = false;
+						$this->_srchFound = true;
+					}
+				} else {
+					$match = false;
+				}
+				if (!$match) {
+					$this->_currPath[$this->_currIdx]['match'] = false;
+				}
+			} else {
+				// as the parent
+			}
+		}
+		
+		return $match;
+		
+	}
+	
     /**
      * Return pos info as string.
      */
@@ -975,6 +1048,8 @@ class MapFileWorkshop {
      */
     public function raiseError($msg, $source = false) {
 
+		$this->_continue = false;
+
         $info = array();
         if ($source) {
             
@@ -992,9 +1067,7 @@ class MapFileWorkshop {
                 $info[] = "in the source string";
             }
             
-            if ($this->_currObj) {
-                $info[] = "for object " . $this->_currObj->getBreadcrumb();
-            }
+            $info[] = "for object " . $this->_debugCurrPath();
             
         }
         
@@ -1003,7 +1076,6 @@ class MapFileWorkshop {
             $msg .= '(' . $info .')';
         }
         
-
         if ($this->errorAsWarning) {
             $this->warnings[] = $msg;
         } else {
@@ -1037,6 +1109,20 @@ class MapFileWorkshop {
     public function _debugCurrObj() {
         return "currObj=".(($this->_currObj) ? $this->_currObj->type : 'none').", currProp={$this->_currProp}, currDelim=({$this->_currPropSD}), currVal=" . implode(' ', $this->_currValues);
     }
+	
+	public function _debugCurrPath() {
+		
+		$txt = '';
+		foreach ($this->_currPath as $item) {
+			$txt .= '/' . $item['obj']->getBreadcrumb();
+			if ($item['obj']->parent !== false) {
+				$txt .= "(with unexpected parent)";
+			}
+		}
+		
+		return $txt;
+		
+	}
     
 }
 
@@ -1060,7 +1146,6 @@ class MapFileObject {
     public $props  = array();      // The only prop wich is multi is CONFIG
     public $delimProps  = array(); // Names of the properties to be ouput with string delimitors
     public $parent = false;
-    public $level  = 0;            // Level of parentness in the hierarchy. Used for incremental displaying.
     
     public $hasEnd = true;
     //public $several = false;
@@ -1358,7 +1443,7 @@ class MapFileObject {
         static $step = '  '; 
         
         if ($indent === false) {
-            $indent = $this->level;
+            $indent = 0;
         }
         
         $incr = str_repeat($step, $indent);

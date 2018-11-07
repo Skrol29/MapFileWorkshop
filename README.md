@@ -1,6 +1,6 @@
 # MapFileWorkshop
 
-MapFileWorkshop is a PHP library for reading, editing and creating MapFiles for MapServer version 5 to 7 and higher.
+MapFileWorkshop is a PHP library for reading, searching, editing and creating MapFiles for MapServer version 5 to 7 and higher.
 It's peculiarity is that no regular expression is used. The MapFile is read with respect to
 the MapServer syntax, but without understanding the meaning. That's why MapFileWorkshop is very fast and agile for reading and writing into files, and to manipulate MapFile snippets.
 
@@ -9,9 +9,9 @@ if needed in futur MapServer versions.
 
 The MapFileWorkshop library is also a nice tool to find syntax errors in an existing MapFile.
 
-This library can read MapFile sources with case insensitive keyworks, but all objects of this library will be modelised with UPPERCASE keywords.
-So you have to use UPPERCASE keywords for managing objects, while your MapFile can stay case insensitive.
-
+This library is case insensitive for reading a source file.
+But when using MapFileWorkshop and MapFileObject classes, all MapServer keywords must be specified UPPERCASE.
+ 
 ```
 @example #1
 
