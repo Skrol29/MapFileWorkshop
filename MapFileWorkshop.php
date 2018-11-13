@@ -11,16 +11,9 @@
  * This library is case insensitive for reading a source file.
  * But when using MapFileWorkshop and MapFileObject classes, all MapServer keywords must be specified UPPERCASE.
  *
- * @author Skrol29
- * @date   2018-10-24
- * @version 0.09 beta 2017-04-24
- * @version 0.10 beta 2017-11-17
- * @version 0.11 beta 2018-06-29
- * @version 0.12 beta 2018-09-10
- * @version 0.13 beta 2018-09-12
- * @version 0.14 beta 2018-09-28
- * @version 0.15 beta 2018-10-24
- * @version 0.20 beta 2018-11-06
+ * @author  Skrol29
+ * @date    2018-11-07
+ * @version 0.21-beta-2018-11-07
  * 
  * @example #1
  *
@@ -483,7 +476,7 @@ class MapFileWorkshop {
                             return $this->raiseError("An END tag is found outside the scope of a block.");
                         }
                     } else {
-                        $obj = new MapFileObject($name, $this->_currObj);
+                        $obj = new MapFileObject($name, $this->_currObj->type);
                         // $obj is false if it's a property
                         if ($obj->supported) {
                             // It's an object
@@ -1148,7 +1141,6 @@ class MapFileObject {
     public $parent = false;
     
     public $hasEnd = true;
-    //public $several = false;
     
     public $srcPosBeg = false;
     public $srcPosEnd = false;
@@ -1198,19 +1190,18 @@ class MapFileObject {
     
     /**
      * Constructor
-     * @param string                      $type   The type of the object (cas sensitive).
-     * @param string|MapFileObject|false  $parent The type of the parent object or the parent object (cas sensitive).
-     *                                            Used only to determine if the type is an object or a property.
+     * @param string $type            The type of the object (cas sensitive).
+     * @param string $chk_parent_type (optional) Check if $type is valid for the given parent type. Useful for a type that can be either a block or a property, like 'SYMBOL'.
+	 *
      * If the type is unkowed in the synopsis, then property « supported » is set to false.
      */
-    public function __construct($type, $parent = false) {
+    public function __construct($type, $chk_parent_type = false) {
         
         $this->type = $type;
 
-        if ($syn = MapFileSynopsis::getSyn($type, $parent)) {
-            $this->innerValCols = $syn['innerValCols'];
-            $this->hasEnd  = $syn['hasEnd'];
-            //$this->several     = $syn['several'];
+        if ($syno = MapFileSynopsis::getSyno($type, $chk_parent_type)) {
+            $this->innerValCols = $syno['innerValCols'];
+            $this->hasEnd  = $syno['hasEnd'];
             $this->supported = true;
         } else {
             $this->supported = false;
@@ -1603,14 +1594,6 @@ class MapFileObject {
      * Return a breadcrumb of the current object in its parent hierarchy.
      * @return {string}
      */
-    public function isSnippet() {
-		return ($this->type == ':SNIPPET:');
-	}
-
-    /**
-     * Return a breadcrumb of the current object in its parent hierarchy.
-     * @return {string}
-     */
     public function getBreadcrumb() {
         
         $sep = '/';
@@ -1618,7 +1601,7 @@ class MapFileObject {
         $obj = $this;
         $h = array();
         do {
-			if (!$obj->isSnippet()) {
+			if ($obj->type != ':SNIPPET:') {
 				$h[] = $obj->_short_descr();
 			}
             $obj = $obj->parent;
@@ -1815,30 +1798,28 @@ class MapFileSynopsis {
 		
     /**
      * Returns the configuration of an object or false if the tag name is not a knowed object (but may be a valid property).
-     * @param  string                      $name    The name of a tag.
-     * @param  string|MapFileObject|false  $parent  A parent object, or the type of the parent object, or false.
+	 *
+     * @param string $name             The name of a tag.
+     * @param string $chk_parent_type (optional) Check if $type is valid for the given parent type. Useful for a type that can be either a block or a property, like 'SYMBOL'.
+	 *
      * @return array|boolean
      */
-    static public function getSyn($name, $parent = false) {
+    static public function getSyno($name, $chk_parent_type = false) {
         if (isset(self::$_special_kw[$name])) {
-            $syn = self::$_special_kw[$name];
-            // Check if the item is an object only for the given parent
-            if ($parent) {
-                if ($syn['onlyForParents']) {
-                    // Ensure to get the parent type
-                    if (!is_string($parent)) {
-                        $parent = $parent->type;
-                    }
-                    if (!in_array($parent, $syn['onlyForParents'], true)) {
+            $syno = self::$_special_kw[$name];
+            // Check if the item is an object only for the given parent type
+            if ($chk_parent_type !== false) {
+                if ($syno['onlyForParents']) {
+                    if (!in_array($chk_parent_type, $syno['onlyForParents'], true)) {
                         return false;
                     }
-                } elseif ($syn['onlyIfNoParent']) {
-                    if (!$parent->isSnippet()) {
+                } elseif ($syno['onlyIfNoParent']) {
+                    if ($chk_parent_type != ':SNIPPET:') {
                         return false;
                     }
                 }
             }
-            return $syn;
+            return $syno;
         } else {
             return false;
         }
