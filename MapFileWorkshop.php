@@ -12,8 +12,8 @@
  * But when using a MapFileObject, all MapServer keywords must be specified UPPERCASE.
  *
  * @author  Skrol29
- * @date    2018-11-07
- * @version 0.21-beta-2018-11-07
+ * @date    2018-12-05
+ * @version 0.30-beta-2018-12-05
  * 
  * @example #1
  *
@@ -108,12 +108,10 @@ class MapFileObject {
      * Return the object corresponding to string.
 	 * @param string  $txt   The string to parse.
 	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
-	 * @param integer $debug_level (optionnal) The debug level (default is none)
      * @return {MapFileObject|false}
      */
-    public static function getFromString($txt, $snippet = false, $debug_level = MapFileWorkshop::DEBUG_NO) {
+    public static function getFromString($txt, $snippet = false) {
         $map = new MapFileWorkshop(false, false);
-		$map->setDebug($debug_level);
         return $map->readString($txt, $snippet);
     }
 
@@ -121,12 +119,10 @@ class MapFileObject {
      * Return the object corresponding to file content.
 	 * @param string  $file   The file to parse.
 	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
-	 * @param integer $debug_level (optionnal) The debug level (default is none)
      * @return {MapFileObject|false}
      */
-    public static function getFromFile($file, $snippet = false, $debug_level = MapFileWorkshop::DEBUG_NO) {
+    public static function getFromFile($file, $snippet = false) {
         $map = new MapFileWorkshop($file, false, $debug_level);
-		$map->setDebug($debug_level);
         return $map->readFile($snippet);
     }
     
@@ -856,6 +852,9 @@ class MapFileWorkshop {
     const STR2 = "'";  // String delimiter  #2
     const ESC  = '\\'; // String escaper
 
+	// Debug level
+	public static $debug = 0;
+	
     // Last loaded file
     public $file = false;
 
@@ -886,7 +885,6 @@ class MapFileWorkshop {
     /**
      * If debug mode is activated then informations is displayed concerning the parsing. 
      */
-    public $debug = 0; // must be a constant of the class
     public $debug_n = 0;
     public $debug_max = 40000;
     
@@ -894,6 +892,14 @@ class MapFileWorkshop {
      * Use this property to catch the errors into $this->warnings instead of raising an Exception.
      */
     public $errorAsWarning = false;
+
+    /**
+     * Set the debug level.
+     * @param {integer} $debug_level 
+     */
+    static function setDebug($debug_level) {
+        self::$debug = $debug_level;
+    }
     
     /**
      * Constructor
@@ -1052,7 +1058,7 @@ class MapFileWorkshop {
         
         $n = 0;
         $n_max = 200000;
-        if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "Start of the source.");
+        if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "Start of the source.");
 
 		$this->_continue = ($pos < $pos_stop);
         while ($this->_continue) {
@@ -1097,7 +1103,7 @@ class MapFileWorkshop {
                     // Nothing to read
                 } else {
                     // Debug
-                    if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, $this->_debug_info_pos($pos) . " store info : word=$word, expr=$expr, delim=($delim)");
+                    if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, $this->_debug_info_pos($pos) . " store info : word=$word, expr=$expr, delim=($delim)");
                     // Store the word or expression information into the buffer
                     $this->_store_info($word, $expr, $delim, $word_p1, $word_p2, $pos);
                     // Reset strings
@@ -1128,7 +1134,7 @@ class MapFileWorkshop {
 			return $this->_currObj;
 		}
         
-        if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "End of the source.");
+        if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "End of the source.");
 
 		// Add warning if we are not back to the first item of the path
 		if ($this->_currIdx != 0) {
@@ -1154,14 +1160,6 @@ class MapFileWorkshop {
         
         return $result;
 
-    }
-
-    /**
-     * Set the debug level.
-     * @param {integer} $debug_level 
-     */
-    public function setDebug($debug_level) {
-        $this->debug = $debug_level;
     }
     
     /**
@@ -1201,7 +1199,7 @@ class MapFileWorkshop {
                     $this->_add_inner_value($word, $p2);
                 } else {
                     $this->_currValues[] = $word;
-                    if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "new value : " . $this->_debugCurrObj());
+                    if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "new value : " . $this->_debugCurrObj());
                 }
             } else {
                 // It may be a keyword-value or a new item
@@ -1230,7 +1228,7 @@ class MapFileWorkshop {
                             // Check if name is valid
                             if (MapFileSynopsis::isValidName($name)) {
                                 $this->_currProp = $name;
-                                if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "new property : " . $this->_debugCurrObj());
+                                if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "new property : " . $this->_debugCurrObj());
                             } else {
                                 return $this->raiseError("Unvalid property name : '" . $name . "'.");
                             }
@@ -1254,7 +1252,7 @@ class MapFileWorkshop {
             } else {
                 $this->_currValues[] = $expr;
                 $this->_currPropSD = $delim; // avoid the object conversion
-                if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "new delimited value : " . $this->_debugCurrObj());
+                if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "new delimited value : " . $this->_debugCurrObj());
             }
             
         }
@@ -1274,9 +1272,9 @@ class MapFileWorkshop {
                 return $this->raiseError("Cannot add inner value '{$val}'. Inner values are not allowed for object '{$obj->type}'.");
             } else {
                 $obj->innerValues[] = $val;
-                if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "new inner value : " . $this->_debugCurrObj());
+                if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "new inner value : " . $this->_debugCurrObj());
                 if ( (!$obj->hasEnd) && (count($obj->innerValues) >= $obj->innerValCols) ) {
-                    if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "close object because of an omitted END after {$this->_currObj->innerValCols} inner values.");
+                    if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "close object because of an omitted END after {$this->_currObj->innerValCols} inner values.");
                     $this->_commit_obj($posEnd, $posEnd);
                 }
             }
@@ -1322,7 +1320,7 @@ class MapFileWorkshop {
         
             if ($this->_currProp) {
 
-                if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "commit current property : " . $this->_debugCurrObj());
+                if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "commit current property : " . $this->_debugCurrObj());
 
                 $val = implode(' ', $this->_currValues);
                 $existed = $this->_currObj->setProp($this->_currProp, $val, $this->_currPropSD, true);
@@ -1356,7 +1354,7 @@ class MapFileWorkshop {
 		$this->_currIdx++;
 		$this->_currPath[$this->_currIdx] = array('idx' => $this->_currIdx, 'match' => $match, 'obj' => $obj);
         
-        if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "add new object : " . $this->_debugCurrObj());
+        if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "add new object : " . $this->_debugCurrObj());
 
     }
 	
@@ -1471,7 +1469,7 @@ class MapFileWorkshop {
             
             $x = $txt[$pos];
 
-            if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_DEEP, __METHOD__, "pos=$pos");
+            if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_DEEP, __METHOD__, "pos=$pos");
             
             if ($this->_is_linebreak($pos, $x)) {
                 $end_of_comment = true;
@@ -1566,7 +1564,7 @@ class MapFileWorkshop {
             
             $x = $txt[$pos];
             
-            if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_DEEP, __METHOD__, "pos=$pos, chr=" . var_export($x,true) . ", delim=$delim, escaped=" . var_export($escaped,true));
+            if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_DEEP, __METHOD__, "pos=$pos, chr=" . var_export($x,true) . ", delim=$delim, escaped=" . var_export($escaped,true));
 
             if ($x === self::ESC) {
                 // Escape character : the  next char must be kept.
@@ -1636,7 +1634,7 @@ class MapFileWorkshop {
             
             $x = $txt[$pos];
 
-            if ($this->debug !== 0) $this->_debugInfo(self::DEBUG_DETAILED, __METHOD__, "line={$this->_line_num}, pos=$pos, char=" . var_export($x,true) . ", scope = $scope");
+            if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_DETAILED, __METHOD__, "line={$this->_line_num}, pos=$pos, char=" . var_export($x,true) . ", scope = $scope");
 
             $incr = true;
             
@@ -1827,7 +1825,7 @@ class MapFileWorkshop {
      * @param {string}  $msg    The message to display.
      */
     private function _debugInfo($debug_level, $caller, $msg) {
-        if ($this->debug >= $debug_level) {
+        if (self::$debug >= $debug_level) {
             if ($this->debug_n == 0) echo "<br>\n";
             echo "[{$caller}] " . $msg . "<br>\n";
             $this->debug_n++;
