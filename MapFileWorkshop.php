@@ -9,7 +9,7 @@
  * The MapFileWorkshop library is also a nice tool to find syntax errors in an existing MapFile.
  *
  * This library is case insensitive for reading a source file.
- * But when using MapFileWorkshop and MapFileObject classes, all MapServer keywords must be specified UPPERCASE.
+ * But when using a MapFileObject, all MapServer keywords must be specified UPPERCASE.
  *
  * @author  Skrol29
  * @date    2018-11-07
@@ -21,37 +21,6 @@
  * $layer = $map->getChild('LAYER', 'my_sweet_layer');
  * echo $layer->getProp('DATA'); // reading a property
  * echo $layer->asString(); // get the MapServer definition
- *
- * @example #2
- *
- * $ws = new MapFileWorkshop('my_source_file.map'); // the source file is not sought at this point
- * $layer = $ws->searchObj('MAP/LAYER:my_layer');   // search for a object in the source
- * $class = $layer->getChild('CLASS', 1);
- * $style = $class->getChild('STYLE', 1);
- * $opacity = $style->getProp('OPACITY');
- * $style->setProp('OUTLINECOLOR', $style->colorHex2Ms('FFFFFF'));
- * $style->setComment("modified by the demo");
- * $ws->replaceDef($style->getSrcPosition(), $style); // replace the object in the target file
- *
- *
- * ---------------------
- * class MapFileWorkshop
- * ---------------------
- *   An object for reading/writing/search in an existing MapFile.
- *   It's better to use MapFileObject::getFromFile() for simply getting the root object in a file (usually a MAP object).
- *   Note that the file contents is actually loaded each time you call readFile() or searchObj().
- *
- * Synopsis:
- *   new MapFileWorkshop($sourceFile = false, $targetFile = false) Create a new instance for working on the source file.
- *  ->readFile()               Parse the whole source file and return the root object. It's typically a MAP object.
- *  ->searchObj($str_path)     Parse the source file until the corresponding object is found.
- *  ->readString($txt)         Parse the whole string and return the root object.
- *  ->replaceDef($srcPos, $newDef) Replace a snippet of definition in the source file and save the result in the target file (can be the same file).
- *                             The physical target file is immediately updated.
- *  ->setDebug($debug_level)   Set the debug level for output info during the parsing of the source.
- *  ->sourceFile               The file containing the MapFile source to read.
- *  ->targetFile               The file to save modified source.
- *  ->warnings                 (array) Warnings messages collected during the parsing.
  *
  * -------------------
  * class MapFileObject
@@ -88,6 +57,12 @@
  *  ::colorHex2Ms()          Convert a '#hhhhhh' color into 'r g b'.   Note that MapServer supports format '#hhhhhh'.
  *  ::colorMs2Hex()          Convert a 'r g b'   color into '#hhhhhh'. Note that MapServer supports format '#hhhhhh'.
  * 
+ * ---------------------
+ * class MapFileSynopsis
+ * ---------------------
+ *
+ * It's a core classe for parsing a file. 
+ *
  * ---------------------
  * class MapFileSynopsis
  * ---------------------
