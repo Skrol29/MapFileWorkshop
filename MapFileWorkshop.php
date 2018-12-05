@@ -97,6 +97,773 @@
  *
  */
 
+
+/**
+ * A MapFile Object is any block in the MapFile that has a END tag.
+ * Other tags in the MapFile are considered as Properties of an object.
+ * Most of Objects have properties and child Objects.
+ * But some Objects may have inner values, thus no properties nor child objects (PROJECTION, METADATA, ...).
+ * Despite reading a MapFile is case insensitive, properties an objects names are all converted uppercase so
+ *  they must be managed uppercase.
+ */
+class MapFileObject {
+    
+    public $type = '';
+    public $supported = false;
+    public $warnings = false; // warnings coming from the reader
+    
+    public $innerValues = array();
+    public $innerValCols = 0;
+    public $children = array();
+    public $props  = array();      // The only prop wich is multi is CONFIG
+    public $delimProps  = array(); // Names of the properties to be ouput with string delimitors
+    public $parent = false;
+    
+    public $hasEnd = true;
+    
+    public $srcPosBeg = false;
+    public $srcPosEnd = false;
+    public $srcPosBottom = false;
+    public $srcLineBeg = false;
+    public $srcLineEnd = false;
+    
+    private $_comment = '';
+
+    /**
+     * Return the object corresponding to string.
+	 * @param string  $txt   The string to parse.
+	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
+	 * @param integer $debug_level (optionnal) The debug level (default is none)
+     * @return {MapFileObject|false}
+     */
+    public static function getFromString($txt, $snippet = false, $debug_level = MapFileWorkshop::DEBUG_NO) {
+        $map = new MapFileWorkshop(false, false);
+		$map->setDebug($debug_level);
+        return $map->readString($txt, $snippet);
+    }
+
+    /**
+     * Return the object corresponding to file content.
+	 * @param string  $file   The file to parse.
+	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
+	 * @param integer $debug_level (optionnal) The debug level (default is none)
+     * @return {MapFileObject|false}
+     */
+    public static function getFromFile($file, $snippet = false, $debug_level = MapFileWorkshop::DEBUG_NO) {
+        $map = new MapFileWorkshop($file, false, $debug_level);
+		$map->setDebug($debug_level);
+        return $map->readFile($snippet);
+    }
+    
+    /**
+     * Return the error message wehn parsing the oecbjt source, or empty string ('') if no error.
+     * @param  {string} $sep (optional) The separator in case they are several errors. Default is a line-break.
+     * @return {string}
+     */
+    public static function checkError($txt, $sep = "\n") {
+        $map = new MapFileWorkshop(false, false);
+        $map->errorAsWarning = true;
+        $map->readString($txt, false);
+        return implode($sep, $map->warnings);
+    }
+    
+    /**
+     * Constructor
+     * @param string $type            The type of the object (cas sensitive).
+     * @param string $chk_parent_type (optional) Check if $type is valid for the given parent type. Useful for a type that can be either a block or a property, like 'SYMBOL'.
+	 *
+     * If the type is unkowed in the synopsis, then property « supported » is set to false.
+     */
+    public function __construct($type, $chk_parent_type = false) {
+        
+        $this->type = $type;
+
+        if ($syno = MapFileSynopsis::getSyno($type, $chk_parent_type)) {
+            $this->innerValCols = $syno['innerValCols'];
+            $this->hasEnd  = $syno['hasEnd'];
+            $this->supported = true;
+        } else {
+            $this->supported = false;
+        }
+
+        
+    }
+    
+    /**
+     * Apply a comment ot the object. This comment is  is displayed only when using ->asString().
+     */
+    public function setComment($comment) {
+        $comment = (string) $comment;
+        $comment = str_replace("\r", '', $comment);
+        $comment = str_replace("\n", '', $comment);
+        $this->_comment = $comment;
+    }
+    
+    /**
+     * Save the property.
+     * @param  string         @prop      The name of the property (case insensitive).
+     * @param  string|false   @value     The value to set. false or null values make the property to be deleted.
+     * @param  string|boolean @strDelim  The string delimitor to use, or true to use the default delimitor (")
+     * @param  boolean @check            (optional) Set to true if you want the function to return whereas the property was previously defined or not.
+     * @return boolean Return true is $check is set to true and the property already existed before.
+     */
+    public function setProp($prop, $value, $strDelim=false, $check=false) {
+        
+        $prop = strtoupper($prop);
+        if ($check) {
+            $check = isset($this->props[$prop]);
+        }
+        
+        if (($value === false) || (is_null($value)) ) {
+            unset($this->props[$prop]);
+        } else {
+            $this->props[$prop] = $value;
+        }
+        
+        // String delimitor
+        if ($strDelim === true) {
+            $strDelim = '"';
+        } elseif ($strDelim === false) {
+            $strDelim = '';
+        }
+        
+        if ($strDelim === '') {
+            unset($this->delimProps[$prop]);
+        } else {
+            $this->delimProps[$prop] = $strDelim;
+        }
+        
+        return $check;
+        
+    }
+    
+    /**
+     * Read the property.
+     * @param  string  @prop    The name of the property (case insensitive).
+     * @param  mixed   @default The value to return if the property is not set.
+     * @return mixed   The existing property's value or the default value.
+     */
+    public function getProp($prop, $default = false) {
+        $prop = strtoupper($prop);
+        if (isset($this->props[$prop])) {
+            return $this->props[$prop];
+        } else {
+            return $default;
+        }
+    }
+
+    /**
+     * Escape and delimit a string.
+     */
+    public function escapeString($str, $strDelim) {
+        return str_replace($strDelim, '\\'.$strDelim, $str);
+    }
+    
+    private function _delim_string($str, $strDelim) {
+        return $strDelim . $this->escapeString($str, $strDelim) . $strDelim;
+    }
+    
+    /**
+     * Count the number of child for a given type.
+     * @param  string $type Type of the objet (case insensitive).
+     * @return integer
+     */
+    public function countChildren($type) {
+        $type = strtoupper($type);
+        $n = 0;
+        foreach($this->children as $obj) {
+            if ($obj->type == $name) {
+                $n++;
+            }
+        }
+        return $n;
+    }
+    
+    /**
+     * Find a child object.
+     * @param string $type Type of the objet (case insensitive)
+     * @param string|integer $nameOrIndex (optional, default is 1) Name of the object (case sensitive) or the index (first is 1) for this type of object.
+     * @param string $nameProp (optional, default is 'NAME') Property for searching the name of the object.
+     */
+    public function getChild($type, $nameOrIndex = 1, $nameProp = 'NAME') {
+        $type = strtoupper($type);
+        $i = 0;
+        $byName = is_string($nameOrIndex);
+        foreach($this->children as $obj) {
+            if ($obj->type == $type) {
+                $i++;
+                if ($byName) {
+                    if ($obj->getProp($nameProp) == $nameOrIndex) {
+                        return $obj;
+                    }
+                } else {
+                    if ($i == $nameOrIndex) {
+                        return $obj;
+                    }
+                }
+            }
+        }            
+        return false;
+    }
+    
+    /**
+     * Return the array of children for a given type.
+     * @param string       $type The type to child to return (case sentitive).
+     * @param false|string $prop (optional) The property to return (case sentitive), or false to return the MapfileObject.
+     * @return array
+     */
+    public function getChildren($type, $return_prop = false) {
+        $res = array();
+        foreach ($this->children as $obj) {
+            if ($obj->type == $type) {
+                if ($return_prop) {
+                    $res[] = $obj->getProp($return_prop);
+                } else {
+                    $res[] = $obj;
+                }
+            }
+        }
+        return $res;
+    }
+    
+    /**
+     * Delete all children of a give type.
+     * @param string $type The type to search (case sentitive).
+     * @return integer The number of deleted children.
+     */
+    public function deleteChildrenByType($type) {
+        $n = 0;
+        for ($i = count($this->children) -1; $i >= 0 ; $i--) {
+            $obj = $this->children[$i];
+            if ($obj->type == $type) {
+                $obj->parent = false;
+                array_splice($this->children, $i, 1);
+                $n++;
+            }
+        }
+        return $n;
+    }
+    
+    /**
+     * Delete all children.
+     * @return integer The number of deleted children.
+     */
+    public function deleteAllChildren() {
+        foreach ($this->children as &$c) {
+            $c->parent = false;
+        }
+        $n = count($this->children);
+        $this->children = array();
+        return $n;
+    }
+    
+    /**
+     * Add a new child or an array of children.
+     * @param  MapFileObject|array $arr
+     * @return integer The number of added children.
+     */
+    public function addChildren($arr) {
+        $n = 0;
+        if (is_object($arr)) {
+            $arr = array($arr);
+        }
+        if (is_array($arr)) {
+            foreach ($arr as $obj) {
+                $obj->parent = $this;
+                $this->children[] = $obj;
+                $n++;
+            }
+        }
+        return $n;
+    }
+
+    /**
+     * If the object is the result of a search, then return an array containing the start en end positions
+     *  of the object in the source.
+     * Otherwise return false.
+     */
+    public function getSrcPosition() {
+        
+        if ($this->srcPosBeg !== false) {
+            return array($this->srcPosBeg, $this->srcPosEnd);
+        } else {
+            return false;
+        }
+        
+    }
+
+    /**
+     * If the object is the result of a search, then return the bottom position
+     *  of the object in the source. That is the position just before the END word.
+     * Otherwise return false.
+     */
+    public function getSrcBottom() {
+        
+        return $this->srcPosBottom;
+        
+    }
+    
+    /**
+     * Return the MapServer definition of the object as a string.
+     * @param integer $indent (optional) The number of text indentations. 
+     */
+    public function asString($indent = false) {
+        
+        static $nl = "\n";
+        static $step = '  '; 
+        
+        if ($indent === false) {
+            $indent = 0;
+        }
+        
+        $incr = str_repeat($step, $indent);
+        $end = $this->hasEnd;
+        
+        // Type
+        $str = $incr . $this->type;
+        
+        // Comment
+        if ($this->_comment !== '') {
+            $str .= $nl . $incr . $step . '# ' . $this->_comment;
+        }
+        
+        // Inner values
+        $col = 1;
+        foreach ($this->innerValues as $val) {
+            // Inner values can be numerical (example: PATTERN)
+            if (!is_numeric($val)) {
+                $val = $this->_delim_string($val, '"');
+            }
+            if ( ($col == 1) && $end ) {
+                $str .= $nl . $incr . $step;
+            } else {
+                $str .= ' ';
+            }
+            $str .= $val;
+            $col++;
+            if ($col > $this->innerValCols) {
+                $col = 1;
+            }
+        }
+        
+        $hasKids = (count($this->children) > 0);
+        $hasProp = (count($this->props) > 0);
+        
+        // Properties
+        if ($hasProp) {
+            if ($hasKids) $str .= $nl;
+            foreach ($this->props as $prop => $val) {
+                if (isset($this->delimProps[$prop])) {
+                    $val = $this->_delim_string($val, $this->delimProps[$prop]);
+                }
+                $str .= $nl . $incr . $step. $prop . ' ' . $val;
+            }
+        }
+        
+        // Child objects
+        $children = $this->_orderder_children(); // increase the time output by 30%
+        foreach ($children as $obj) {
+            // Just like MapScript, we add a line-break before each object of the MAP (level = 1)
+            if ($hasKids && $obj->hasEnd) {
+                $str .= $nl;
+            }
+            $str .= $nl . $obj->asString($indent + 1);
+        }
+        
+        // End
+        if ($end) {
+            if ($hasKids) $str .= $nl;
+            $str .= $nl . $incr . 'END # ' . $this->type;
+        }
+        
+        return $str;
+    
+    }
+    
+    /**
+     * Save the object in the file.
+     * return true.
+     */
+    public function saveInFile($file) {
+
+        $str = $this->asString();
+
+        file_put_contents($file, $str);
+        
+        return true;
+        
+    }
+    
+    /**
+     * Return a short descr of the current object.
+     */
+    private function _short_descr() {
+        
+        $name = $this->getProp('NAME', '');
+        $num = $this->_get_child_num();
+        
+        $x = $this->type;
+        if ($num !== false)  $x .= '(#' . $num . ')';
+        if ($name != '')  $x .= '[' . $name . ']';
+        
+        return $x;
+
+    }
+
+    /**
+     * Return the ordre numer of current object in the parent's child of the same type.
+     * First child is number 1.
+     * Return false if no parent or current object not found.
+     */
+    private function _get_child_num() {
+        
+        if ($this->parent) {
+            $num = 0;
+            foreach ($this->parent->children as $c) {
+                if ($this->type == $c->type) {
+                    $num++;
+                }
+                if ($this === $c) {
+                    return $num;
+                }
+            }
+        }
+
+        return false;
+        
+    }
+    
+    /**
+     * Return the list of child ordered by type.
+     * More numerous types are ordered at the end, then it is ordered by type name.
+     * In a same type, children are nor re-ordered because custom CLASS and STYLE orders actually matter.
+     */
+    private function _orderder_children() {
+
+        // build the type list
+        $t_nb  = array();
+        $t_ch = array();
+        foreach ($this->children as $idx => $c) {
+            $t = $c->type;
+            if (!isset($t_nb[$t])) {
+                $t_nb[$t] = 0;
+                $t_ch[$t] = array();
+            }
+            $t_nb[$t]++;
+            $t_ch[$t][] = $c;
+        }
+        
+        // Sort the type list by number of items
+        ksort($t_nb);
+        asort($t_nb);
+        
+        // Cuild the child list sorted by type
+        $result = array();
+        foreach($t_nb as $t => $nb) {
+            foreach ($t_ch[$t] as $c) {
+                $result[] = $c;
+            }
+        }
+
+        return $result;
+        
+    }
+    
+    /**
+     * Return a breadcrumb of the current object in its parent hierarchy.
+     * @return {string}
+     */
+    public function getBreadcrumb() {
+        
+        $sep = '/';
+        
+        $obj = $this;
+        $h = array();
+        do {
+			if ($obj->type != ':SNIPPET:') {
+				$h[] = $obj->_short_descr();
+			}
+            $obj = $obj->parent;
+        } while ($obj);
+        
+        $x = implode($sep, array_reverse($h));
+        
+        return $x;
+        
+    }
+
+    /**
+     * For debug only.
+     * Use this method to return a var_export() on the current object. This will avoid « Fatal error: Nesting level too deep ».
+     */
+    public function varExport() {
+		$this->_unsetParent();
+		$x = var_export($this, true);
+		$this->_setParent();
+		return $x;
+    }
+    
+	private function _unsetParent() {
+		$this->parent = false;
+		foreach ($this->children as $c) {
+			$c->_unsetParent();
+		}
+	}
+
+	private function _setParent() {
+		$this->parent = false;
+		foreach ($this->children as $c) {
+			$c->_setParent();
+		}
+	}
+    
+    /**
+     * Convert an hexa color number into a MapServer (RGB) color number.
+     * Empty values are returned as is.
+     * @param string $hex The color number as hexa, with or without the '#' symbole.
+     * @return string The MapServer color number.
+     */
+    public static function colorHex2Ms($hex) {
+        
+        // Check empty value
+        $hex = trim($hex);
+        if ($hex == '') return '';
+        
+        $hex = str_replace('#', '', $hex);
+        
+        if(strlen($hex) == 3) {
+            $r = hexdec(substr($hex,0,1).substr($hex,0,1));
+            $g = hexdec(substr($hex,1,1).substr($hex,1,1));
+            $b = hexdec(substr($hex,2,1).substr($hex,2,1));
+        } else {
+            $r = hexdec(substr($hex,0,2));
+            $g = hexdec(substr($hex,2,2));
+            $b = hexdec(substr($hex,4,2));
+        }
+       
+        $rgb = $r . ' ' . $g . ' ' . $b;
+        return $rgb;
+       
+    }    
+
+    /**
+     * Convert a MapServer (RGB) color number into an hexa color number.
+     * Empty values are returned as is.
+     * @param string $rgb The color number as MapServer (RGB separated with with spaces).
+     * @return string The Hexa color number, without '#'.
+     */
+    public static function colorMs2Hex($rgb) {
+        
+        $rgb = str_replace("\r", ' ', $rgb);
+        $rgb = str_replace("\n", ' ', $rgb);
+        $rgb = str_replace("\t", ' ', $rgb);
+        while (strpos($rgb, '  ') !== false) {
+            $rgb = str_replace('  ', ' ', $rgb);
+        }
+        
+        // Check empty value
+        $rgb = trim($rgb);
+        if ($rgb == '') return '';
+        
+        // Ensure last items
+        $rgb .= ' 0 0 0';
+        $rgb = trim($rgb);
+        $rgb = explode(' ', $rgb);
+        
+        $hex = '';
+        $hex .= str_pad(dechex($rgb[0]), 2, '0', STR_PAD_LEFT);
+        $hex .= str_pad(dechex($rgb[1]), 2, '0', STR_PAD_LEFT);
+        $hex .= str_pad(dechex($rgb[2]), 2, '0', STR_PAD_LEFT);
+
+        return $hex;
+
+    }
+    
+}
+
+
+/*
+ * The MapFileSynopsis class manages the dictionary of special keywords in MapFiles and their corresponding properties needed to read them.
+ *
+ * For this library, a « simple » MapServer keyword is a keyword that is expected to be followed by a single value (according to the MapFile syntax).
+ * For this library, a « special » keyword is any keyword that is not a simple keyword.
+ * The dictionary of special keywords and their properties is listed above.
+ *
+ */
+class MapFileSynopsis {
+	
+	/**
+	 * Default properties for all special keywords.
+	 */
+    private static $_default = array(
+		'hasEnd' => true,          // false means the keyword has no END tag. Thus the end of the object is determined using property innerValCols.
+		'innerValCols' => 0,       // The number of values expected for this keyword. 0 means the object has no inner value (it contains keywords).
+		'onlyForParents' => false, // List of keyworks for whom this one is special. For other parents, this one is considered has a simple keyword (a keyword with a single value).
+		'onlyIfNoParent' => false, // True means that this keyword is special only if it has no parent (as root or as a free object).
+		'several' => false,        // True means that they may be several of this object type in the same parent.
+	);
+    
+    /**
+     * List of special keywords and their properties.
+     */
+    private static $_special_kw = array(
+	  'CLASS' => array( // children: LABEL, LEADER, STYLE, VALIDATION
+		'several' => true,
+	  ),
+	  'CLUSTER' => array(),
+	  'COLORRANGE' => array(
+		'hasEnd' => false,
+		'innerValCols' => 2, // supports only hexadecimal strings for now, (r g b) values not supported yet
+		'several' => true,
+	  ),
+	  'COMPOSITE' => array(),
+	  'CONFIG' => array(
+		'hasEnd' => false,
+		'innerValCols' => 2,
+		'several' => true,
+	  ),
+	  'FEATURE' => array(), // children: POINTS
+	  'GRID' => array(),
+	  'JOIN' => array(),
+	  'LABEL' => array(), // children: STYLE
+	  'LAYER' => array( // children: CLUSTER, COMPOSITE, FEATURE, PROCESSING, GRID, JOIN, PROJECTION, VALIDATION, CLASS
+		'several' => true,
+	  ),
+	  'LEADER' => array(), // children: STYLE
+	  'LEGEND' => array(), // children: LABEL
+	  'MAP' => array(), // children: CONFIG, OUTPUTFORMAT, PROJECTION, LEGEND, QUERYMAP, REFERENCE, SCALEBAR, SYMBOL, WEB, LAYER
+	  'METADATA' => array(
+		'innerValCols' => 2,
+	  ),
+	  'OUTPUTFORMAT' => array(),
+	  'PATTERN' => array(
+		'innerValCols' => 1,
+	  ),
+	  'POINTS' => array(
+		'innerValCols' => 2,
+	  ),
+	  'PROCESSING' => array(
+		'hasEnd' => false,
+		'innerValCols' => 1,
+		'several' => true,
+	  ),
+	  'PROJECTION' => array(
+		'innerValCols' => 1,
+	  ),
+	  'QUERYMAP' => array(),
+	  'REFERENCE' => array(),
+	  'SCALEBAR' => array(), // children: LABEL
+	  'STYLE' => array(  // children: PATTERN, COLORRANGE
+		'several' => true,
+	  ),
+	  'SYMBOL' => array( // children: POINTS
+		'onlyForParents' => array(
+		  'MAP',
+		  'SYMBOLSET',
+		),
+		'several' => true,
+	  ),
+	  'SYMBOLSET' => array( // children: SYMBOL
+		'onlyIfNoParent' => true,
+	  ),
+	  'VALIDATION' => array(
+		'innerValCols' => 2,
+	  ),
+	  'WEB' => array(), // children: METADATA
+	);
+    
+	// Indicates if the dictionary has to be prepared.
+	static $to_prepare = true;
+
+		
+    /**
+     * Returns the configuration of an object or false if the tag name is not a knowed object (but may be a valid property).
+	 *
+     * @param string $name             The name of a tag.
+     * @param string $chk_parent_type (optional) Check if $type is valid for the given parent type. Useful for a type that can be either a block or a property, like 'SYMBOL'.
+	 *
+     * @return array|boolean
+     */
+    static public function getSyno($name, $chk_parent_type = false) {
+        if (isset(self::$_special_kw[$name])) {
+            $syno = self::$_special_kw[$name];
+            // Check if the item is an object only for the given parent type
+            if ($chk_parent_type !== false) {
+                if ($syno['onlyForParents']) {
+                    if (!in_array($chk_parent_type, $syno['onlyForParents'], true)) {
+                        return false;
+                    }
+                } elseif ($syno['onlyIfNoParent']) {
+                    if ($chk_parent_type != ':SNIPPET:') {
+                        return false;
+                    }
+                }
+            }
+            return $syno;
+        } else {
+            return false;
+        }
+    }
+   
+    /**
+     * Return true if the tag is the one for ending blocks.
+     * @param  string  @name
+     * @return boolean
+     */
+    static public function isEnd($name) {
+        return ($name === 'END');
+    }
+    
+    /**
+     * Return true if the tag name is valid.
+     * @param  string  @name
+     * @return boolean
+     */
+    static public function isValidName($name) {
+        if ($name == '') return false;
+        // For now we check only the first char. TODO : check MapServer keywords naming.
+        $x = strtoupper($name[0]);
+        $o = ord($x);
+        // ord('A')=65, ord('Z')=90
+        if ($o < 65) return false;
+        if ($o > 90) return false;
+        return true;
+    }
+    
+    /**
+     * Prepare the dictionary if it has not been done before.
+     * Preparing the dictionary consists in setting all default preperties and check for coherence.
+     */
+    static public function prepare() {
+
+        if (self::$to_prepare) {
+			
+            foreach (self::$_special_kw as $k => $def) {
+				
+				$def = array_merge(self::$_default, $def);
+				self::$_special_kw[$k] = $def;
+				
+				// Check 'hasEnd'
+				if (!$def['hasEnd']) {
+					if ($def['innerValCols'] <= 0) {
+						self::_raiseError("Synopsis ERROR: item '$k' has 'hasEnd' set to false wihtout a positive 'innerValCols'. You have to fix the Synopsis configuration.");
+					}
+				}
+				
+			}
+			
+            self::$to_prepare = false;
+			
+        }
+    }       
+
+    static private function _raiseError($msg) {
+        throw new Exception(__CLASS__ . " ERROR : " . $msg);
+        return false;
+    }    
+
+}
+
 class MapFileWorkshop {
     
     const NL  = "\n";    // New line
@@ -1117,769 +1884,4 @@ class MapFileWorkshop {
 		
 	}
     
-}
-
-/**
- * A MapFile Object is any block in the MapFile that has a END tag.
- * Other tags in the MapFile are considered as Properties of an object.
- * Most of Objects have properties and child Objects.
- * But some Objects may have inner values, thus no properties nor child objects (PROJECTION, METADATA, ...).
- * Despite reading a MapFile is case insensitive, properties an objects names are all converted uppercase so
- *  they must be managed uppercase.
- */
-class MapFileObject {
-    
-    public $type = '';
-    public $supported = false;
-    public $warnings = false; // warnings coming from the reader
-    
-    public $innerValues = array();
-    public $innerValCols = 0;
-    public $children = array();
-    public $props  = array();      // The only prop wich is multi is CONFIG
-    public $delimProps  = array(); // Names of the properties to be ouput with string delimitors
-    public $parent = false;
-    
-    public $hasEnd = true;
-    
-    public $srcPosBeg = false;
-    public $srcPosEnd = false;
-    public $srcPosBottom = false;
-    public $srcLineBeg = false;
-    public $srcLineEnd = false;
-    
-    private $_comment = '';
-
-    /**
-     * Return the object corresponding to string.
-	 * @param string  $txt   The string to parse.
-	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
-	 * @param integer $debug_level (optionnal) The debug level (default is none)
-     * @return {MapFileObject|false}
-     */
-    public static function getFromString($txt, $snippet = false, $debug_level = MapFileWorkshop::DEBUG_NO) {
-        $map = new MapFileWorkshop(false, false);
-		$map->setDebug($debug_level);
-        return $map->readString($txt, $snippet);
-    }
-
-    /**
-     * Return the object corresponding to file content.
-	 * @param string  $file   The file to parse.
-	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
-	 * @param integer $debug_level (optionnal) The debug level (default is none)
-     * @return {MapFileObject|false}
-     */
-    public static function getFromFile($file, $snippet = false, $debug_level = MapFileWorkshop::DEBUG_NO) {
-        $map = new MapFileWorkshop($file, false, $debug_level);
-		$map->setDebug($debug_level);
-        return $map->readFile($snippet);
-    }
-    
-    /**
-     * Return the error message wehn parsing the oecbjt source, or empty string ('') if no error.
-     * @param  {string} $sep (optional) The separator in case they are several errors. Default is a line-break.
-     * @return {string}
-     */
-    public static function checkError($txt, $sep = "\n") {
-        $map = new MapFileWorkshop(false, false);
-        $map->errorAsWarning = true;
-        $map->readString($txt, false);
-        return implode($sep, $map->warnings);
-    }
-    
-    /**
-     * Constructor
-     * @param string $type            The type of the object (cas sensitive).
-     * @param string $chk_parent_type (optional) Check if $type is valid for the given parent type. Useful for a type that can be either a block or a property, like 'SYMBOL'.
-	 *
-     * If the type is unkowed in the synopsis, then property « supported » is set to false.
-     */
-    public function __construct($type, $chk_parent_type = false) {
-        
-        $this->type = $type;
-
-        if ($syno = MapFileSynopsis::getSyno($type, $chk_parent_type)) {
-            $this->innerValCols = $syno['innerValCols'];
-            $this->hasEnd  = $syno['hasEnd'];
-            $this->supported = true;
-        } else {
-            $this->supported = false;
-        }
-
-        
-    }
-    
-    /**
-     * Apply a comment ot the object. This comment is  is displayed only when using ->asString().
-     */
-    public function setComment($comment) {
-        $comment = (string) $comment;
-        $comment = str_replace("\r", '', $comment);
-        $comment = str_replace("\n", '', $comment);
-        $this->_comment = $comment;
-    }
-    
-    /**
-     * Save the property.
-     * @param  string         @prop      The name of the property (case insensitive).
-     * @param  string|false   @value     The value to set. false or null values make the property to be deleted.
-     * @param  string|boolean @strDelim  The string delimitor to use, or true to use the default delimitor (")
-     * @param  boolean @check            (optional) Set to true if you want the function to return whereas the property was previously defined or not.
-     * @return boolean Return true is $check is set to true and the property already existed before.
-     */
-    public function setProp($prop, $value, $strDelim=false, $check=false) {
-        
-        $prop = strtoupper($prop);
-        if ($check) {
-            $check = isset($this->props[$prop]);
-        }
-        
-        if (($value === false) || (is_null($value)) ) {
-            unset($this->props[$prop]);
-        } else {
-            $this->props[$prop] = $value;
-        }
-        
-        // String delimitor
-        if ($strDelim === true) {
-            $strDelim = '"';
-        } elseif ($strDelim === false) {
-            $strDelim = '';
-        }
-        
-        if ($strDelim === '') {
-            unset($this->delimProps[$prop]);
-        } else {
-            $this->delimProps[$prop] = $strDelim;
-        }
-        
-        return $check;
-        
-    }
-    
-    /**
-     * Read the property.
-     * @param  string  @prop    The name of the property (case insensitive).
-     * @param  mixed   @default The value to return if the property is not set.
-     * @return mixed   The existing property's value or the default value.
-     */
-    public function getProp($prop, $default = false) {
-        $prop = strtoupper($prop);
-        if (isset($this->props[$prop])) {
-            return $this->props[$prop];
-        } else {
-            return $default;
-        }
-    }
-
-    /**
-     * Escape and delimit a string.
-     */
-    public function escapeString($str, $strDelim) {
-        return str_replace($strDelim, '\\'.$strDelim, $str);
-    }
-    
-    private function _delim_string($str, $strDelim) {
-        return $strDelim . $this->escapeString($str, $strDelim) . $strDelim;
-    }
-    
-    /**
-     * Count the number of child for a given type.
-     * @param  string $type Type of the objet (case insensitive).
-     * @return integer
-     */
-    public function countChildren($type) {
-        $type = strtoupper($type);
-        $n = 0;
-        foreach($this->children as $obj) {
-            if ($obj->type == $name) {
-                $n++;
-            }
-        }
-        return $n;
-    }
-    
-    /**
-     * Find a child object.
-     * @param string $type Type of the objet (case insensitive)
-     * @param string|integer $nameOrIndex (optional, default is 1) Name of the object (case sensitive) or the index (first is 1) for this type of object.
-     * @param string $nameProp (optional, default is 'NAME') Property for searching the name of the object.
-     */
-    public function getChild($type, $nameOrIndex = 1, $nameProp = 'NAME') {
-        $type = strtoupper($type);
-        $i = 0;
-        $byName = is_string($nameOrIndex);
-        foreach($this->children as $obj) {
-            if ($obj->type == $type) {
-                $i++;
-                if ($byName) {
-                    if ($obj->getProp($nameProp) == $nameOrIndex) {
-                        return $obj;
-                    }
-                } else {
-                    if ($i == $nameOrIndex) {
-                        return $obj;
-                    }
-                }
-            }
-        }            
-        return false;
-    }
-    
-    /**
-     * Return the array of children for a given type.
-     * @param string       $type The type to child to return (case sentitive).
-     * @param false|string $prop (optional) The property to return (case sentitive), or false to return the MapfileObject.
-     * @return array
-     */
-    public function getChildren($type, $return_prop = false) {
-        $res = array();
-        foreach ($this->children as $obj) {
-            if ($obj->type == $type) {
-                if ($return_prop) {
-                    $res[] = $obj->getProp($return_prop);
-                } else {
-                    $res[] = $obj;
-                }
-            }
-        }
-        return $res;
-    }
-    
-    /**
-     * Delete all children of a give type.
-     * @param string $type The type to search (case sentitive).
-     * @return integer The number of deleted children.
-     */
-    public function deleteChildrenByType($type) {
-        $n = 0;
-        for ($i = count($this->children) -1; $i >= 0 ; $i--) {
-            $obj = $this->children[$i];
-            if ($obj->type == $type) {
-                $obj->parent = false;
-                array_splice($this->children, $i, 1);
-                $n++;
-            }
-        }
-        return $n;
-    }
-    
-    /**
-     * Delete all children.
-     * @return integer The number of deleted children.
-     */
-    public function deleteAllChildren() {
-        foreach ($this->children as &$c) {
-            $c->parent = false;
-        }
-        $n = count($this->children);
-        $this->children = array();
-        return $n;
-    }
-    
-    /**
-     * Add a new child or an array of children.
-     * @param  MapFileObject|array $arr
-     * @return integer The number of added children.
-     */
-    public function addChildren($arr) {
-        $n = 0;
-        if (is_object($arr)) {
-            $arr = array($arr);
-        }
-        if (is_array($arr)) {
-            foreach ($arr as $obj) {
-                $obj->parent = $this;
-                $this->children[] = $obj;
-                $n++;
-            }
-        }
-        return $n;
-    }
-
-    /**
-     * If the object is the result of a search, then return an array containing the start en end positions
-     *  of the object in the source.
-     * Otherwise return false.
-     */
-    public function getSrcPosition() {
-        
-        if ($this->srcPosBeg !== false) {
-            return array($this->srcPosBeg, $this->srcPosEnd);
-        } else {
-            return false;
-        }
-        
-    }
-
-    /**
-     * If the object is the result of a search, then return the bottom position
-     *  of the object in the source. That is the position just before the END word.
-     * Otherwise return false.
-     */
-    public function getSrcBottom() {
-        
-        return $this->srcPosBottom;
-        
-    }
-    
-    /**
-     * Return the MapServer definition of the object as a string.
-     * @param integer $indent (optional) The number of text indentations. 
-     */
-    public function asString($indent = false) {
-        
-        static $nl = "\n";
-        static $step = '  '; 
-        
-        if ($indent === false) {
-            $indent = 0;
-        }
-        
-        $incr = str_repeat($step, $indent);
-        $end = $this->hasEnd;
-        
-        // Type
-        $str = $incr . $this->type;
-        
-        // Comment
-        if ($this->_comment !== '') {
-            $str .= $nl . $incr . $step . '# ' . $this->_comment;
-        }
-        
-        // Inner values
-        $col = 1;
-        foreach ($this->innerValues as $val) {
-            // Inner values can be numerical (example: PATTERN)
-            if (!is_numeric($val)) {
-                $val = $this->_delim_string($val, '"');
-            }
-            if ( ($col == 1) && $end ) {
-                $str .= $nl . $incr . $step;
-            } else {
-                $str .= ' ';
-            }
-            $str .= $val;
-            $col++;
-            if ($col > $this->innerValCols) {
-                $col = 1;
-            }
-        }
-        
-        $hasKids = (count($this->children) > 0);
-        $hasProp = (count($this->props) > 0);
-        
-        // Properties
-        if ($hasProp) {
-            if ($hasKids) $str .= $nl;
-            foreach ($this->props as $prop => $val) {
-                if (isset($this->delimProps[$prop])) {
-                    $val = $this->_delim_string($val, $this->delimProps[$prop]);
-                }
-                $str .= $nl . $incr . $step. $prop . ' ' . $val;
-            }
-        }
-        
-        // Child objects
-        $children = $this->_orderder_children(); // increase the time output by 30%
-        foreach ($children as $obj) {
-            // Just like MapScript, we add a line-break before each object of the MAP (level = 1)
-            if ($hasKids && $obj->hasEnd) {
-                $str .= $nl;
-            }
-            $str .= $nl . $obj->asString($indent + 1);
-        }
-        
-        // End
-        if ($end) {
-            if ($hasKids) $str .= $nl;
-            $str .= $nl . $incr . 'END # ' . $this->type;
-        }
-        
-        return $str;
-    
-    }
-    
-    /**
-     * Save the object in the file.
-     * return true.
-     */
-    public function saveInFile($file) {
-
-        $str = $this->asString();
-
-        file_put_contents($file, $str);
-        
-        return true;
-        
-    }
-    
-    /**
-     * Return a short descr of the current object.
-     */
-    private function _short_descr() {
-        
-        $name = $this->getProp('NAME', '');
-        $num = $this->_get_child_num();
-        
-        $x = $this->type;
-        if ($num !== false)  $x .= '(#' . $num . ')';
-        if ($name != '')  $x .= '[' . $name . ']';
-        
-        return $x;
-
-    }
-
-    /**
-     * Return the ordre numer of current object in the parent's child of the same type.
-     * First child is number 1.
-     * Return false if no parent or current object not found.
-     */
-    private function _get_child_num() {
-        
-        if ($this->parent) {
-            $num = 0;
-            foreach ($this->parent->children as $c) {
-                if ($this->type == $c->type) {
-                    $num++;
-                }
-                if ($this === $c) {
-                    return $num;
-                }
-            }
-        }
-
-        return false;
-        
-    }
-    
-    /**
-     * Return the list of child ordered by type.
-     * More numerous types are ordered at the end, then it is ordered by type name.
-     * In a same type, children are nor re-ordered because custom CLASS and STYLE orders actually matter.
-     */
-    private function _orderder_children() {
-
-        // build the type list
-        $t_nb  = array();
-        $t_ch = array();
-        foreach ($this->children as $idx => $c) {
-            $t = $c->type;
-            if (!isset($t_nb[$t])) {
-                $t_nb[$t] = 0;
-                $t_ch[$t] = array();
-            }
-            $t_nb[$t]++;
-            $t_ch[$t][] = $c;
-        }
-        
-        // Sort the type list by number of items
-        ksort($t_nb);
-        asort($t_nb);
-        
-        // Cuild the child list sorted by type
-        $result = array();
-        foreach($t_nb as $t => $nb) {
-            foreach ($t_ch[$t] as $c) {
-                $result[] = $c;
-            }
-        }
-
-        return $result;
-        
-    }
-    
-    /**
-     * Return a breadcrumb of the current object in its parent hierarchy.
-     * @return {string}
-     */
-    public function getBreadcrumb() {
-        
-        $sep = '/';
-        
-        $obj = $this;
-        $h = array();
-        do {
-			if ($obj->type != ':SNIPPET:') {
-				$h[] = $obj->_short_descr();
-			}
-            $obj = $obj->parent;
-        } while ($obj);
-        
-        $x = implode($sep, array_reverse($h));
-        
-        return $x;
-        
-    }
-
-    /**
-     * For debug only.
-     * Use this method to return a var_export() on the current object. This will avoid « Fatal error: Nesting level too deep ».
-     */
-    public function varExport() {
-		$this->_unsetParent();
-		$x = var_export($this, true);
-		$this->_setParent();
-		return $x;
-    }
-    
-	private function _unsetParent() {
-		$this->parent = false;
-		foreach ($this->children as $c) {
-			$c->_unsetParent();
-		}
-	}
-
-	private function _setParent() {
-		$this->parent = false;
-		foreach ($this->children as $c) {
-			$c->_setParent();
-		}
-	}
-    
-    /**
-     * Convert an hexa color number into a MapServer (RGB) color number.
-     * Empty values are returned as is.
-     * @param string $hex The color number as hexa, with or without the '#' symbole.
-     * @return string The MapServer color number.
-     */
-    public static function colorHex2Ms($hex) {
-        
-        // Check empty value
-        $hex = trim($hex);
-        if ($hex == '') return '';
-        
-        $hex = str_replace('#', '', $hex);
-        
-        if(strlen($hex) == 3) {
-            $r = hexdec(substr($hex,0,1).substr($hex,0,1));
-            $g = hexdec(substr($hex,1,1).substr($hex,1,1));
-            $b = hexdec(substr($hex,2,1).substr($hex,2,1));
-        } else {
-            $r = hexdec(substr($hex,0,2));
-            $g = hexdec(substr($hex,2,2));
-            $b = hexdec(substr($hex,4,2));
-        }
-       
-        $rgb = $r . ' ' . $g . ' ' . $b;
-        return $rgb;
-       
-    }    
-
-    /**
-     * Convert a MapServer (RGB) color number into an hexa color number.
-     * Empty values are returned as is.
-     * @param string $rgb The color number as MapServer (RGB separated with with spaces).
-     * @return string The Hexa color number, without '#'.
-     */
-    public static function colorMs2Hex($rgb) {
-        
-        $rgb = str_replace("\r", ' ', $rgb);
-        $rgb = str_replace("\n", ' ', $rgb);
-        $rgb = str_replace("\t", ' ', $rgb);
-        while (strpos($rgb, '  ') !== false) {
-            $rgb = str_replace('  ', ' ', $rgb);
-        }
-        
-        // Check empty value
-        $rgb = trim($rgb);
-        if ($rgb == '') return '';
-        
-        // Ensure last items
-        $rgb .= ' 0 0 0';
-        $rgb = trim($rgb);
-        $rgb = explode(' ', $rgb);
-        
-        $hex = '';
-        $hex .= str_pad(dechex($rgb[0]), 2, '0', STR_PAD_LEFT);
-        $hex .= str_pad(dechex($rgb[1]), 2, '0', STR_PAD_LEFT);
-        $hex .= str_pad(dechex($rgb[2]), 2, '0', STR_PAD_LEFT);
-
-        return $hex;
-
-    }
-    
-}
-
-/*
- * The MapFileSynopsis class manages the dictionary of special keywords in MapFiles and their corresponding properties needed to read them.
- *
- * For this library, a « simple » MapServer keyword is a keyword that is expected to be followed by a single value (according to the MapFile syntax).
- * For this library, a « special » keyword is any keyword that is not a simple keyword.
- * The dictionary of special keywords and their properties is listed above.
- *
- */
-class MapFileSynopsis {
-	
-	/**
-	 * Default properties for all special keywords.
-	 */
-    private static $_default = array(
-		'hasEnd' => true,          // false means the keyword has no END tag. Thus the end of the object is determined using property innerValCols.
-		'innerValCols' => 0,       // The number of values expected for this keyword. 0 means the object has no inner value (it contains keywords).
-		'onlyForParents' => false, // List of keyworks for whom this one is special. For other parents, this one is considered has a simple keyword (a keyword with a single value).
-		'onlyIfNoParent' => false, // True means that this keyword is special only if it has no parent (as root or as a free object).
-		'several' => false,        // True means that they may be several of this object type in the same parent.
-	);
-    
-    /**
-     * List of special keywords and their properties.
-     */
-    private static $_special_kw = array(
-	  'CLASS' => array( // children: LABEL, LEADER, STYLE, VALIDATION
-		'several' => true,
-	  ),
-	  'CLUSTER' => array(),
-	  'COLORRANGE' => array(
-		'hasEnd' => false,
-		'innerValCols' => 2, // supports only hexadecimal strings for now, (r g b) values not supported yet
-		'several' => true,
-	  ),
-	  'COMPOSITE' => array(),
-	  'CONFIG' => array(
-		'hasEnd' => false,
-		'innerValCols' => 2,
-		'several' => true,
-	  ),
-	  'FEATURE' => array(), // children: POINTS
-	  'GRID' => array(),
-	  'JOIN' => array(),
-	  'LABEL' => array(), // children: STYLE
-	  'LAYER' => array( // children: CLUSTER, COMPOSITE, FEATURE, PROCESSING, GRID, JOIN, PROJECTION, VALIDATION, CLASS
-		'several' => true,
-	  ),
-	  'LEADER' => array(), // children: STYLE
-	  'LEGEND' => array(), // children: LABEL
-	  'MAP' => array(), // children: CONFIG, OUTPUTFORMAT, PROJECTION, LEGEND, QUERYMAP, REFERENCE, SCALEBAR, SYMBOL, WEB, LAYER
-	  'METADATA' => array(
-		'innerValCols' => 2,
-	  ),
-	  'OUTPUTFORMAT' => array(),
-	  'PATTERN' => array(
-		'innerValCols' => 1,
-	  ),
-	  'POINTS' => array(
-		'innerValCols' => 2,
-	  ),
-	  'PROCESSING' => array(
-		'hasEnd' => false,
-		'innerValCols' => 1,
-		'several' => true,
-	  ),
-	  'PROJECTION' => array(
-		'innerValCols' => 1,
-	  ),
-	  'QUERYMAP' => array(),
-	  'REFERENCE' => array(),
-	  'SCALEBAR' => array(), // children: LABEL
-	  'STYLE' => array(  // children: PATTERN, COLORRANGE
-		'several' => true,
-	  ),
-	  'SYMBOL' => array( // children: POINTS
-		'onlyForParents' => array(
-		  'MAP',
-		  'SYMBOLSET',
-		),
-		'several' => true,
-	  ),
-	  'SYMBOLSET' => array( // children: SYMBOL
-		'onlyIfNoParent' => true,
-	  ),
-	  'VALIDATION' => array(
-		'innerValCols' => 2,
-	  ),
-	  'WEB' => array(), // children: METADATA
-	);
-    
-	// Indicates if the dictionary has to be prepared.
-	static $to_prepare = true;
-
-		
-    /**
-     * Returns the configuration of an object or false if the tag name is not a knowed object (but may be a valid property).
-	 *
-     * @param string $name             The name of a tag.
-     * @param string $chk_parent_type (optional) Check if $type is valid for the given parent type. Useful for a type that can be either a block or a property, like 'SYMBOL'.
-	 *
-     * @return array|boolean
-     */
-    static public function getSyno($name, $chk_parent_type = false) {
-        if (isset(self::$_special_kw[$name])) {
-            $syno = self::$_special_kw[$name];
-            // Check if the item is an object only for the given parent type
-            if ($chk_parent_type !== false) {
-                if ($syno['onlyForParents']) {
-                    if (!in_array($chk_parent_type, $syno['onlyForParents'], true)) {
-                        return false;
-                    }
-                } elseif ($syno['onlyIfNoParent']) {
-                    if ($chk_parent_type != ':SNIPPET:') {
-                        return false;
-                    }
-                }
-            }
-            return $syno;
-        } else {
-            return false;
-        }
-    }
-   
-    /**
-     * Return true if the tag is the one for ending blocks.
-     * @param  string  @name
-     * @return boolean
-     */
-    static public function isEnd($name) {
-        return ($name === 'END');
-    }
-    
-    /**
-     * Return true if the tag name is valid.
-     * @param  string  @name
-     * @return boolean
-     */
-    static public function isValidName($name) {
-        if ($name == '') return false;
-        // For now we check only the first char. TODO : check MapServer keywords naming.
-        $x = strtoupper($name[0]);
-        $o = ord($x);
-        // ord('A')=65, ord('Z')=90
-        if ($o < 65) return false;
-        if ($o > 90) return false;
-        return true;
-    }
-    
-    /**
-     * Prepare the dictionary if it has not been done before.
-     * Preparing the dictionary consists in setting all default preperties and check for coherence.
-     */
-    static public function prepare() {
-
-        if (self::$to_prepare) {
-			
-            foreach (self::$_special_kw as $k => $def) {
-				
-				$def = array_merge(self::$_default, $def);
-				self::$_special_kw[$k] = $def;
-				
-				// Check 'hasEnd'
-				if (!$def['hasEnd']) {
-					if ($def['innerValCols'] <= 0) {
-						self::_raiseError("Synopsis ERROR: item '$k' has 'hasEnd' set to false wihtout a positive 'innerValCols'. You have to fix the Synopsis configuration.");
-					}
-				}
-				
-			}
-			
-            self::$to_prepare = false;
-			
-        }
-    }       
-
-    static private function _raiseError($msg) {
-        throw new Exception(__CLASS__ . " ERROR : " . $msg);
-        return false;
-    }    
-
 }
