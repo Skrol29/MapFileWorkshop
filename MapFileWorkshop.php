@@ -17,10 +17,14 @@
  * 
  * @example #1
  *
- * $map = new MapFileObject::getFromFile('my_source_file.map'); // read and load the complete MAP definition in memory, i.e. including all layers
+ * $map = new MapFileObject::getFromFile('my_source_file.map');
  * $layer = $map->getChild('LAYER', 'my_sweet_layer');
  * echo $layer->getProp('DATA'); // reading a property
  * echo $layer->asString(); // get the MapServer definition
+ *
+ * @example #2
+ *
+ * $map = new MapFileObject::getFromFile('my_source_file.map', 'MAP/LAYER:my_sweet_layer');
  *
  * -------------------
  * class MapFileObject
@@ -28,10 +32,13 @@
  *   Represents a MapFile object, with its properties and children objects.
  *
  * Synopsis:
+ *
  *  new MapFileObject($type) Create a new object of the given type with no properties and no child.
- *  ::getFromString($str)    Return the object from a string source, or false if not supported.
- *  ::getFromFile($file)     Return the object from a file   source, or false if not supported.
+ *
+ *  ::getFromString($str, $path)    Return the object from a string source, or false if not supported.
+ *  ::getFromFile($file, $path)     Return the object from a file   source, or false if not supported.
  *  ::checkError($str)       Return the error message when parsing the source, or empty string ('') if no error.
+ *
  *  ->innerValues            (read/write) List of the inner values in a single row.
  *                             Inner values are attached to the object without any property's name.
  *                             Example : CONFIG, PROJECTION, SYMBOL, METADA,... 
@@ -106,35 +113,37 @@ class MapFileObject {
 
     /**
      * Return the object corresponding to string.
-	 * @param string  $txt   The string to parse.
-	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
+	 * @param string  $txt       The string to parse.
+	 * @param string  $str_path (optional) the search path. Examples : 'MAP/LAYER:my_layer'. By default return the first object which is usually MAP.
      * @return {MapFileObject|false}
      */
-    public static function getFromString($txt, $snippet = false) {
+    public static function getFromString($txt, $str_path = false) {
         $map = new MapFileWorkshop(false, false);
-        return $map->readString($txt, $snippet);
+		$map->setSearchPath($str_path);
+        return $map->readContent($txt);
     }
 
     /**
      * Return the object corresponding to file content.
-	 * @param string  $file   The file to parse.
-	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
+	 * @param string  $file     The file to parse.
+	 * @param string  $str_path (optional) the search path. Examples : 'MAP/LAYER:my_layer'. By default return the first object which is usually MAP.
      * @return {MapFileObject|false}
      */
-    public static function getFromFile($file, $snippet = false) {
-        $map = new MapFileWorkshop($file, false, $debug_level);
-        return $map->readFile($snippet);
+    public static function getFromFile($file, $str_path = false) {
+        $map = new MapFileWorkshop($file, false);
+		$map->setSearchPath($str_path);
+        return $map->readFile();
     }
     
     /**
-     * Return the error message wehn parsing the oecbjt source, or empty string ('') if no error.
-     * @param  {string} $sep (optional) The separator in case they are several errors. Default is a line-break.
-     * @return {string}
+     * Return the error message when parsing the content, or empty string ('') if no error.
+     * @return {string} $content The content to parse.
+     * @param  {string} $sep     (optional) The separator in case they are several errors. Default is a line-break.
      */
-    public static function checkError($txt, $sep = "\n") {
+    public static function checkError($content, $sep = "\n") {
         $map = new MapFileWorkshop(false, false);
         $map->errorAsWarning = true;
-        $map->readString($txt, false);
+        $map->readContent($content);
         return implode($sep, $map->warnings);
     }
     
@@ -835,6 +844,10 @@ class MapFileSynopsis {
 
 }
 
+/**
+ * This is a core classe for parsing a Mapfile content.
+ * Do not use directly. Use MapFileObject instead.
+ */
 class MapFileWorkshop {
     
     const NL  = "\n";    // New line
@@ -877,10 +890,11 @@ class MapFileWorkshop {
 	private $_currPath = false;
 	private $_currIdx = false;
     
-    private $_srchOk = false;
+	// Search variables
     private $_srchPath = false;
     private $_srchLastIdx = false;
     private $_srchFound = false;
+    private $_srchFirstObj = false;
     
     /**
      * If debug mode is activated then informations is displayed concerning the parsing. 
@@ -917,42 +931,27 @@ class MapFileWorkshop {
 		}
 		
     }
-        
-    /**
-     * Get the root object from the MapFile. (It is usually a MAP object).
-	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
-     */
-    public function readFile($snippet = false) {
-        $this->_srchOk = false;
-        return $this->_read_file($snippet);
-    }
     
     /**
-     * Search for the first object that matches the path.
+     * Set the search path.
      *
-	 * @param string $str_path Example : 'MAP/LAYER:my_layer'
+	 * @param string $str_path (optional) Path for the search.
+	 *                         - false (default value) means it will return the first object in the snippet (typically a MAP object)
+	 *                         - ':SNIPPET:'  means it will return the virtual snippet object. Thta is an object that contains all the objects in the file.
+	 *                         - a string like : 'MAP/LAYER:my_layer'
 	 *                         The target object must be defined with its hierarchy.
 	 *                         Each item can be : 
 	 *                         - a simple type (examples : 'MAP', 'LAYER', ...)
 	 *                         - a type with a child numerical index - first index is 1 - ( examples : 'LAYER:1', 'CLASS:1', ...)  
 	 *                         - a type with a name (example : 'LAYER:my_layer')
+	 
      */
-    public function searchObj($str_path) {
+    public function setSearchPath($str_path) {
         
-		
+		$this->_srchFirstObj = ($str_path === false);
 		$this->_srchPath = $this->_get_search_path($str_path);
 		$this->_srchLastIdx = count($this->_srchPath) - 1;
-		
-		$this->_srchOk = ($this->_srchLastIdx > 1);
 		$this->_srchFound = false;
-		
-		if ($this->_srchOk) {
-			$obj = $this->_read_file(false);
-		    $this->_srchOk = false;
-			return $obj;
-		} else {
-			return false;
-		}
         
     }
     
@@ -1026,14 +1025,15 @@ class MapFileWorkshop {
 
     /**
      * Read a structure from a string.
-     * @param string  $txt        The string to parse
-	 * @param boolean $snippet (optional) true will return a virtual SNIPPET object that can contains several children. False will resturn the first object.
-	 *                                       It can be useful to return the snippet object if you know that $txt can contain several objects or property.
-	 *                                       Bu usually a snippet contain only object root object.
-     * @return MapFileObject The type of the MapFileObject is always ':SNIPPET:'. The MAP object is usually a child of this object.
+     * @param string  $txt      The string to parse
+     * @return MapFileObject    The object correspsonding to the search, of false if not found.
      */
-    public function readString($txt, $snippet = false) {
+    public function readContent($txt) {
 
+		if ($this->_srchPath === false) {
+			$this->setSearchPath(false);
+		}
+	
         // Initialize the line counter
         $this->_line_init();
         
@@ -1128,48 +1128,53 @@ class MapFileWorkshop {
 			}
             
         }
+		
+        if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "End of the source is met.");
+
+		// we close the last object.
+		if (!$this->_srchFound) {
+			// $this->_srchFound can become true if we search for the snippet
+			if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "Commit the current objet (type=". $this->_currObj->type .").");
+			$this->_commit_obj($pos_stop -1 , 0);
+		}
 
 		// Search result
-		if ($this->_srchOk && $this->_srchFound) {
-			return $this->_currObj;
-		}
-        
-        if (self::$debug !== 0) $this->_debugInfo(self::DEBUG_NORMAL, __METHOD__, "End of the source.");
+		if ($this->_srchFound) {
+			
+			$result = false;
+			if ($this->_srchFirstObj) {
+				if (isset($this->_currObj->children[0])) {
+					$result = $this->_currObj->children[0];
+				}
+			} else {
+				$result = $this->_currObj;
+			}
+			
+			if ($result !== false) {
+				$result->warnings = $this->warnings;
+				return $result;
+			}
+			
+		} 
 
 		// Add warning if we are not back to the first item of the path
 		if ($this->_currIdx != 0) {
 			return $this->raiseError("The end of the source is met with {$this->_currIdx} missing block endings.");
-		}
-        
-		// Object to return
-		$result = false;
-		if ($this->_srchOk) {
-			// not found
-		} elseif ($snippet) {
-			$result = $this->_currObj;
-		} else {
-			if (isset($this->_currObj->children[0])) {
-				$result = $this->_currObj->children[0];
-			}
-		}
+		}		
 		
-        // Copy warnings
-		if ($result !== false) {
-			$result->warnings = $this->warnings;
-		}
-        
-        return $result;
+		// Means error or not found
+        return false;
 
     }
     
     /**
-	 * @param boolean $snippet True means the function return the SNIPPET object, fals means its first child (usually a MAP object).
+	 * Read the source file.
 	 */
-    private function _read_file($snippet) {
-        
+    public function readFile() {
+		
         $this->warnings = array();
         $txt = file_get_contents($this->sourceFile);
-        $obj = $this->readString($txt, $snippet);
+        $obj = $this->readContent($txt);
         return $obj;
         
     }
@@ -1360,6 +1365,9 @@ class MapFileWorkshop {
 	
     /**
      * Close the current object and move to the parent one.
+	 * 
+	 * @param integer $posEnd    Position of the last  character of the object definition.  Equals to $posBottom if the object has no END keyword.
+	 * @param integer $posBottom Position of the first character of the object definition.
      */
     private function _commit_obj($posEnd, $posBottom) {
         
@@ -1370,18 +1378,15 @@ class MapFileWorkshop {
         $obj->srcPosEnd = $posEnd;
         $obj->srcPosBottom = $posBottom;
 
+		$match = $this->_update_curr_match();
+		if ($this->_srchFound) {
+			return;
+		}
+		
 		if ($this->_currIdx == 0) {
 			return $this->raiseError("The source contains too much block endings. The first block ending out of the scope is at line {$obj->srcLineEnd}, but the wrong closing can be anywhere before.");
 		}
-		
-		$match = true;
-		if ($this->_srchOk) {
-			$match = $this->_update_curr_match();
-			if ($this->_srchFound) {
-				return;
-			}
-		}
-		
+
 		// attach the current object to its parent
 		if ($match) {
 			$this->_currPath[$this->_currIdx-1]['obj']->addChildren($obj);
@@ -1701,16 +1706,22 @@ class MapFileWorkshop {
 		);
 		
         if (is_string($str_path)) {
-			$items = explode('/', $str_path);
-		    foreach ($items as $x) {
-			    $x = explode(':', $x);
-			    if (isset($x[1])) {
-					$srchPath[] = array('type'=> $x[0], 'ref' => $x[1]);
-			    } else {
-					$srchPath[] = array('type'=> $x[0], 'ref' => 1);
-			    }
-		    }
-        } else {
+			
+			if ($str_path == ':SNIPPET:') {
+				// nothing to do
+			} else {
+				$items = explode('/', $str_path);
+				foreach ($items as $x) {
+					$x = explode(':', $x);
+					if (isset($x[1])) {
+						$srchPath[] = array('type'=> $x[0], 'ref' => $x[1]);
+					} else {
+						$srchPath[] = array('type'=> $x[0], 'ref' => 1);
+					}
+				}
+			}
+			
+        } elseif (is_array($str_path)) {
 		    foreach ($str_path as $k => $v) {
 			    if (is_numeric($k)) {
 					$srchPath[] = array('type'=> $v, 'ref' => 1);
@@ -1718,7 +1729,7 @@ class MapFileWorkshop {
 					$srchPath[] = array('type'=> $k, 'ref' => $v);
 			    }
 		    }
-        }
+		}
 		
 		foreach ($srchPath as &$rec) {
 			$rec['isnum'] = is_numeric($rec['ref']);
@@ -1733,13 +1744,19 @@ class MapFileWorkshop {
 		$match = $this->_currPath[$this->_currIdx]['match'];
 		
 		if ($match) {
+
 			if ($this->_currIdx <= $this->_srchLastIdx) {
 				// check the matching
 				$chk = $this->_srchPath[$this->_currIdx];
 				if ($chk['type'] == $this->_currObj->type) {
 					if ($chk['isnum']) {
-						$parent = $this->_currPath[$this->_currIdx-1]['obj'];
-						$match = ($chk['ref'] == 1 + $parent->countChildren($chk['type']));
+						if ($this->_currIdx > 0) {
+							$parent = $this->_currPath[$this->_currIdx-1]['obj'];
+							$match = ($chk['ref'] == 1 + $parent->countChildren($chk['type']));
+						} else {
+							// the curr idx is the snippet, it always match its level
+							$this->_srchFound = true;
+						}
 					} else {
 						$match = ($chk['ref'] == $this->_currObj->getProp('NAME'));
 					}
