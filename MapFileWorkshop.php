@@ -13,7 +13,7 @@
  *
  * @author  Skrol29
  * @date    2018-12-05
- * @version 0.30-beta-2018-12-05
+ * @version 0.30-beta-2019-06-11
  * 
  * @example #1
  *
@@ -252,7 +252,7 @@ class MapFileObject {
         $type = strtoupper($type);
         $n = 0;
         foreach($this->children as $obj) {
-            if ($obj->type == $name) {
+            if ($obj->type == $type) {
                 $n++;
             }
         }
